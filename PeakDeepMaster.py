@@ -7,7 +7,7 @@ from rich import print
 from rich.syntax import Syntax
 
 from src.data.DataModule import PeakDeepMasterDataModule
-from src.models.RatioEstimator import CouplingRatioEstimator
+from src.models.RatioEstimator import LLHRatioEstimator
 from src.utils.Train import train
 from src.utils.Predict import predict
 from src.utils.Performance import testing
@@ -30,13 +30,13 @@ def main(cfg: DictConfig) -> None:
 
         if cfg.general.mode == "train":
             logger.info("Starting training...")
-            train(datamodule, CouplingRatioEstimator, cfg)
+            train(datamodule, LLHRatioEstimator, cfg)
         elif cfg.general.mode == "predict":
-            predict(datamodule, CouplingRatioEstimator, cfg)
+            predict(datamodule, LLHRatioEstimator, cfg)
         elif cfg.general.mode == "performance":
-            testing(datamodule, CouplingRatioEstimator, cfg)
+            testing(datamodule, LLHRatioEstimator, cfg)
         elif cfg.general.mode == "infer":
-            run_inference(datamodule, CouplingRatioEstimator, cfg)
+            run_inference(datamodule, LLHRatioEstimator, cfg)
         else:
             raise ValueError(f"Unsupported mode: {cfg.general.mode}")
     except ConfigAttributeError:

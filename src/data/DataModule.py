@@ -8,10 +8,10 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.data.DataHelpers import (
     augment_data_for_background,
-    build_indices_per_coupling,
+    build_indices_per_parameter,
     feature_key,
-    get_unique_couplings,
-    holdout_mask_from_couplings,
+    get_unique_parameters,
+    holdout_mask_from_parameters,
     normalize_feature_specs,
     norm_weights_per_category_and_sign,
     parse_feature_spec,
@@ -47,10 +47,11 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             raise ValueError("Exactly one entry is currently supported in dataset.weights")
 
         self.parameter_spec = parameter_specs[0]
+        logger.debug("Parameter spec: %s", self.parameter_spec)
         self.weight_spec = weight_specs[0]
-        self.coupling_values_for_training = list(self.parameter_spec.get("values_for_training", []))
-        self.holdout_couplings = list(self.parameter_spec.get("values_for_testing", []))
-        if len(self.coupling_values_for_training) == 0:
+        self.parameter_values_for_training = list(self.parameter_spec.get("values_for_training", []))
+        self.holdout_parameters = list(self.parameter_spec.get("values_for_testing", []))
+        if len(self.parameter_values_for_training) == 0:
             raise ValueError("values_for_training must be provided in dataset.parameters[0]")
 
         self.random_seed = int(getattr(cfg.dataset, "random_seed", cfg.general.seed))
@@ -59,7 +60,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         self.background_weight_sign = cfg.train.background_weight_sign
 
         self.scaler = None
-        self.couplings_category_dict = {}
+        self.parameters_category_dict = {}
         self.feature_index_map = {}
         self.transformed_feature_keys = []
 
@@ -77,24 +78,25 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         with h5py.File(self.input_h5_path, "r") as data_file:
             labels_dataset = data_file["LABELS"]["CLASS"][:]
-            couplings_array = data_file["INPUTS"]["EVENT_GLOBAL"]["coupling"][:]
+            parameter_group, parameter_variable = parse_feature_spec(self.parameter_spec)
+            parameters_array = data_file["INPUTS"][parameter_group][parameter_variable][:]
 
-            coupling_values = get_unique_couplings(couplings_array)
-            logger.debug("Unique coupling values in dataset: %s", coupling_values)
-            indices_per_coupling = build_indices_per_coupling(
-                couplings_array=couplings_array,
-                coupling_values=coupling_values,
+            parameter_values = get_unique_parameters(parameters_array)
+            logger.debug("Unique parameter values in dataset: %s", parameter_values)
+            indices_per_parameter = build_indices_per_parameter(
+                parameters_array=parameters_array,
+                parameter_values=parameter_values,
                 max_events_per_parameter=self.max_events_per_parameter,
                 random_seed=self.random_seed,
             )
-            training_indices = np.concatenate(list(indices_per_coupling.values()))
+            training_indices = np.concatenate(list(indices_per_parameter.values()))
 
             logger.debug("Structuring the data..")
-            X, y, self.couplings_category_dict, self.feature_index_map = structure_data(
+            X, y, self.parameters_category_dict, self.feature_index_map = structure_data(
                 data_file=data_file,
                 labels_dataset=labels_dataset,
-                coupling_values=coupling_values,
-                coupling_values_for_training=self.coupling_values_for_training,
+                parameter_values=parameter_values,
+                parameter_values_for_training=self.parameter_values_for_training,
                 observables_config=self.observables_config,
                 parameter_spec=self.parameter_spec,
                 weight_spec=self.weight_spec,
@@ -104,7 +106,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         param_group, param_variable = parse_feature_spec(self.parameter_spec)
         weight_group, weight_variable = parse_feature_spec(self.weight_spec)
-        coupling_column_index = self.feature_index_map[feature_key(param_group, param_variable)]
+        parameter_column_index = self.feature_index_map[feature_key(param_group, param_variable)]
         weight_column_index = self.feature_index_map[feature_key(weight_group, weight_variable)]
         
         logger.debug("Normalizing weights...")
@@ -115,8 +117,8 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         X, y = augment_data_for_background(
             X,
             y,
-            self.coupling_values_for_training,
-            coupling_column_index=coupling_column_index,
+            self.parameter_values_for_training,
+            parameter_column_index=parameter_column_index,
         )
         logger.debug("Data[0] example: %s", X[1])
 
@@ -131,7 +133,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         X = self.scaler.fit_transform(X)
         logger.debug("Data[0] example: %s", X[1])
 
-        self.coupling_column_index = self.transformed_feature_keys.index(feature_key(param_group, param_variable))
+        self.parameter_column_index = self.transformed_feature_keys.index(feature_key(param_group, param_variable))
         self.weight_column_index = self.transformed_feature_keys.index(feature_key(weight_group, weight_variable))
 
         self.observable_column_indices = []
@@ -142,9 +144,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         self.x_column_indices = list(self.observable_column_indices)
 
-        logger.debug("Removing the holdout datasets with parameters %s" % str(self.holdout_couplings))
-        holdout_mask = holdout_mask_from_couplings(
-            y[:, 1], self.holdout_couplings, self.couplings_category_dict
+        logger.debug("Removing the holdout datasets with parameters %s" % str(self.holdout_parameters))
+        holdout_mask = holdout_mask_from_parameters(
+            y[:, 1], self.holdout_parameters, self.parameters_category_dict
         )
 
         self.X_holdout = X[holdout_mask]

@@ -1,10 +1,13 @@
 import numpy as np
 import torch
+from pathlib import Path
 from omegaconf import DictConfig
+import logging
 
 from src.data.DataHelpers import feature_key, parse_feature_spec
-from src.utils.utils import get_latest_checkpoint_path, load_checkpoint_into_model
+from src.utils.utils import get_latest_checkpoint_path, load_checkpoint_into_model, resolve_runtime_path
 
+logger = logging.getLogger(__name__)
 
 def logits(x_obs: torch.Tensor, theta: torch.Tensor, model) -> torch.Tensor:
     return model(x_obs, theta).reshape(-1)
@@ -37,9 +40,20 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     if not hasattr(cfg, "inference"):
         raise ValueError("Missing inference section in config.")
 
+    output_dir = Path(resolve_runtime_path(getattr(cfg.inference, "output_dir", "results/inference")))
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    observable = getattr(cfg.inference, "observable", None)
+    if observable is None:
+        logger.error("Inference config must specify an observable to scan.")
+        raise ValueError("Missing observable in inference config.")
+    logger.info(f"Running inference scan for observable: {observable}")
+
+    logger.info("Loading models for inference...")
     pp_ckpt = cfg.inference.model_pp_checkpoint
     pn_ckpt = cfg.inference.model_pn_checkpoint
 
+    logger.info("Setting datamodule...")
     datamodule.setup(stage="infer")
 
     model_pp = model_class(cfg)
@@ -52,38 +66,39 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     model_pn.eval()
 
     x_indices = datamodule.x_column_indices
-    coupling_index = datamodule.coupling_column_index
+    parameter_index = datamodule.parameter_column_index
     weight_index = datamodule.weight_column_index
 
-    mttbar_key = None
+    logger.debug("Finding observable key in transformed features...")
+    observable_key = None
     param_group, param_variable = parse_feature_spec(datamodule.parameter_spec)
-    coupling_transformer_name = f"param_{param_variable}"
+    parameter_transformer_name = f"param_{param_variable}"
     for obs in datamodule.observables_config:
         group_name, variable_name = parse_feature_spec(obs)
-        if variable_name == "mttbar":
-            mttbar_key = feature_key(group_name, variable_name)
+        if variable_name == observable:
+            observable_key = feature_key(group_name, variable_name)
             break
-    if mttbar_key is None:
-        raise ValueError("Inference requires mttbar to be listed in dataset.observables.")
-    mttbar_index = datamodule.transformed_feature_keys.index(mttbar_key)
+    if observable_key is None:
+        raise ValueError(f"Inference requires {observable} to be listed in dataset.observables.")
+    observable_index = datamodule.transformed_feature_keys.index(observable_key)
 
-    # Build a reference background sample from test split at high transformed coupling.
+    # Build a reference background sample from test split at high transformed parameter.
     X_test = datamodule.test_dataset.tensors[0].cpu().numpy()
     y_test = datamodule.test_dataset.tensors[1].cpu().numpy()
 
-    bg_mask = (y_test[:, 0] == 0) & (X_test[:, coupling_index] >= 0.98)
+    bg_mask = (y_test[:, 0] == 0) & (X_test[:, parameter_index] >= 0.98)
     X_ref = X_test[bg_mask]
 
-    # Pick first holdout coupling as hypothesis if available.
+    # Pick first holdout parameter as hypothesis if available.
     if datamodule.X_holdout is None or len(datamodule.X_holdout) == 0:
-        raise RuntimeError("No holdout events available for inference. Check holdout couplings in config.")
+        raise RuntimeError("No holdout events available for inference. Check holdout parameters in config.")
 
     X_hyp = datamodule.X_holdout
     y_hyp = datamodule.y_holdout
     signal_holdout = X_hyp[y_hyp[:, 0] == 1]
 
     hypothesis_shape, hypothesis_var, _ = _hist(
-        signal_holdout[:, mttbar_index], np.abs(signal_holdout[:, weight_index])
+        signal_holdout[:, observable_index], np.abs(signal_holdout[:, weight_index])
     )
 
     theta_scan = np.linspace(cfg.inference.theta_min, cfg.inference.theta_max, cfg.inference.n_points)
@@ -105,13 +120,13 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     x_ref_tensor = torch.tensor(X_ref[:, x_indices], dtype=torch.float32)
 
     for theta in theta_scan:
-        theta_scaled = datamodule.scaler.named_transformers_[coupling_transformer_name].transform([[theta]])[0, 0]
+        theta_scaled = datamodule.scaler.named_transformers_[parameter_transformer_name].transform([[theta]])[0, 0]
         theta_tensor = torch.tensor([theta_scaled], dtype=torch.float32)
 
         rew = -1.0 * rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
         rew = rew / (np.abs(rew).sum() / max(np.abs(hypothesis_shape).sum(), 1e-8))
 
-        infer_shape, infer_var, _ = _hist(X_ref[:, mttbar_index], rew)
+        infer_shape, infer_var, _ = _hist(X_ref[:, observable_index], rew)
         chi2_values.append(chi_squared(hypothesis_shape, infer_shape, infer_var))
 
     best_idx = int(np.argmin(chi2_values))

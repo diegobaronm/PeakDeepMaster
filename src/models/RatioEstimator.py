@@ -24,7 +24,7 @@ class RatioEstimatorNet(nn.Module):
         return self.net(torch.cat([x, theta], dim=1))
 
 
-class CouplingRatioEstimator(L.LightningModule):
+class LLHRatioEstimator(L.LightningModule):
     def __init__(self, cfg):
         super().__init__()
         self.save_hyperparameters(ignore=["cfg"])
@@ -42,13 +42,13 @@ class CouplingRatioEstimator(L.LightningModule):
         )
         self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
         self.x_column_indices = None
-        self.coupling_column_index = None
+        self.parameter_column_index = None
         self.weight_column_index = None
 
     def setup(self, stage: str | None = None):
         dm = self.trainer.datamodule
         self.x_column_indices = list(dm.x_column_indices)
-        self.coupling_column_index = int(dm.coupling_column_index)
+        self.parameter_column_index = int(dm.parameter_column_index)
         self.weight_column_index = int(dm.weight_column_index)
 
     def _step(self, batch, stage: str):
@@ -56,7 +56,7 @@ class CouplingRatioEstimator(L.LightningModule):
         y_true = targets[:, 0]
 
         x = inputs[:, self.x_column_indices]
-        theta = inputs[:, self.coupling_column_index].unsqueeze(1)
+        theta = inputs[:, self.parameter_column_index].unsqueeze(1)
         event_weights = torch.abs(inputs[:, self.weight_column_index])
 
         logits = self.model(x, theta).squeeze()
@@ -85,7 +85,7 @@ class CouplingRatioEstimator(L.LightningModule):
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         inputs, targets = batch
         x = inputs[:, self.x_column_indices]
-        theta = inputs[:, self.coupling_column_index].unsqueeze(1)
+        theta = inputs[:, self.parameter_column_index].unsqueeze(1)
         logits = self.model(x, theta)
         return {
             "predictions": torch.sigmoid(logits),

@@ -12,16 +12,16 @@ logging:
   capture_warnings: true
 
 dataset:
-  input_h5_path: ../H5Files/Mass_Inference_negW.h5
+  input_h5_path: data/Mass_Inference_negW.h5
   max_events_per_parameter: 700000
   observables:
-    - EVENT_PATICLES: top1_pt
+    - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
-    - EVENT_PATICLES: top2_pt
+    - EVENT_PARTICLES: top2_pt
       transformation: LogScaler
-    - EVENT_PATICLES: top1_eta
+    - EVENT_PARTICLES: top1_eta
       transformation: StandardScaler
-    - EVENT_PATICLES: top2_eta
+    - EVENT_PARTICLES: top2_eta
       transformation: StandardScaler
     - EVENT_GLOBAL: mttbar
       transformation: StandardScaler
@@ -45,12 +45,12 @@ model:
   dropout: 0.05
 
 train:
-  n_epochs: 140
+  n_epochs: 160
   learning_rate: 0.0002
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: negative
+  signal_weight_sign: positive
   background_weight_sign: positive
   compile: false
 
@@ -59,8 +59,8 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: lightning_logs/version_1/checkpoints/
-  output_dir: results/performance/PN_Model
+  checkpoint_path: lightning_logs/1D_mass_PN/checkpoints/
+  output_dir: results/performance/1D_mass/PN_Model
   batch_size: 10240
 
 inference:

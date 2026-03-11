@@ -17,8 +17,8 @@ from src.utils.utils import (
 )
 
 
-def _category_to_coupling_map(couplings_category_dict: dict[float, int]) -> dict[int, float]:
-    return {int(category): float(coupling) for coupling, category in couplings_category_dict.items()}
+def _category_to_parameter_map(parameters_category_dict: dict[float, int]) -> dict[int, float]:
+    return {int(category): float(parameter) for parameter, category in parameters_category_dict.items()}
 
 
 def _collect_predictions(trainer, model, dataset, batch_size: int) -> dict[str, np.ndarray] | None:
@@ -47,7 +47,7 @@ def _plot_score_distributions(
     scores: np.ndarray,
     labels: np.ndarray,
     categories: np.ndarray,
-    category_to_coupling: dict[int, float],
+    category_to_parameter: dict[int, float],
     split_name: str,
     output_dir: Path,
 ) -> None:
@@ -75,9 +75,9 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        coupling = category_to_coupling.get(category, float(category))
+        parameter = category_to_parameter.get(category, float(category))
         plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0))
-        legend_labels.append(f"S c={coupling:.2f}")
+        legend_labels.append(f"S c={parameter:.2f}")
 
     plt.xlabel("Predicted Scores")
     plt.ylabel("Density")
@@ -96,7 +96,7 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        coupling = category_to_coupling.get(category, float(category))
+        parameter = category_to_parameter.get(category, float(category))
         plt.figure(figsize=(8, 5))
         plt.hist(
             background_scores,
@@ -108,14 +108,14 @@ def _plot_score_distributions(
             linewidth=2.5,
             range=(0.0, 1.0),
         )
-        plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0), label=f"Signal c={coupling:.2f}")
+        plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0), label=f"Signal c={parameter:.2f}")
         plt.xlabel("Predicted Scores")
         plt.ylabel("Density")
-        plt.title(f"{split_name.title()} scores: background vs c={coupling:.2f}")
+        plt.title(f"{split_name.title()} scores: background vs c={parameter:.2f}")
         plt.yscale("log")
         plt.legend(loc="upper right")
         plt.tight_layout()
-        plt.savefig(by_category_dir / f"scores_{split_name}_c{coupling:.2f}.png", dpi=200, bbox_inches="tight")
+        plt.savefig(by_category_dir / f"scores_{split_name}_c{parameter:.2f}.png", dpi=200, bbox_inches="tight")
         plt.close()
 
 
@@ -123,7 +123,7 @@ def _plot_roc_curves(
     scores: np.ndarray,
     labels: np.ndarray,
     categories: np.ndarray,
-    category_to_coupling: dict[int, float],
+    category_to_parameter: dict[int, float],
     split_name: str,
     output_dir: Path,
 ) -> None:
@@ -154,14 +154,14 @@ def _plot_roc_curves(
 
         fpr, tpr, _ = roc_curve(selected_labels, selected_scores)
         roc_auc = auc(fpr, tpr)
-        coupling = category_to_coupling.get(category, float(category))
+        parameter = category_to_parameter.get(category, float(category))
 
-        plt.plot(fpr, tpr, lw=2, label=f"AUC = {roc_auc:.3f} -- c = {coupling:.2f}")
+        plt.plot(fpr, tpr, lw=2, label=f"AUC = {roc_auc:.3f} -- c = {parameter:.2f}")
         roc_rows.append(
             {
                 "split": split_name,
                 "category": int(category),
-                "coupling": coupling,
+                "parameter": parameter,
                 "auc": float(roc_auc),
                 "signal_count": int(category_mask.sum()),
                 "background_count": int(background_mask.sum()),
@@ -175,10 +175,10 @@ def _plot_roc_curves(
         plt.ylim(0.0, 1.05)
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
-        plt.title(f"{split_name.title()} ROC: background vs c={coupling:.2f}")
+        plt.title(f"{split_name.title()} ROC: background vs c={parameter:.2f}")
         plt.legend(loc="lower right")
         plt.tight_layout()
-        plt.savefig(by_category_dir / f"roc_{split_name}_c{coupling:.2f}.png", dpi=200, bbox_inches="tight")
+        plt.savefig(by_category_dir / f"roc_{split_name}_c{parameter:.2f}.png", dpi=200, bbox_inches="tight")
         plt.close(plt_single)
 
     plt.legend(loc="lower right")
@@ -195,7 +195,7 @@ def _run_plots_for_split(
     model,
     datamodule,
     split_name: str,
-    category_to_coupling: dict[int, float],
+    category_to_parameter: dict[int, float],
     output_dir: Path,
     batch_size: int,
 ) -> None:
@@ -215,7 +215,7 @@ def _run_plots_for_split(
         scores=predictions["scores"],
         labels=predictions["labels"],
         categories=predictions["categories"],
-        category_to_coupling=category_to_coupling,
+        category_to_parameter=category_to_parameter,
         split_name=split_name,
         output_dir=split_output_dir,
     )
@@ -223,7 +223,7 @@ def _run_plots_for_split(
         scores=predictions["scores"],
         labels=predictions["labels"],
         categories=predictions["categories"],
-        category_to_coupling=category_to_coupling,
+        category_to_parameter=category_to_parameter,
         split_name=split_name,
         output_dir=split_output_dir,
     )
@@ -246,6 +246,6 @@ def testing(datamodule, model_class, cfg: DictConfig) -> None:
     output_dir = Path(resolve_runtime_path(getattr(cfg.performance, "output_dir", "results/performance")))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    category_to_coupling = _category_to_coupling_map(datamodule.couplings_category_dict)
-    _run_plots_for_split(trainer, model, datamodule, "test", category_to_coupling, output_dir, batch_size)
-    _run_plots_for_split(trainer, model, datamodule, "holdout", category_to_coupling, output_dir, batch_size)
+    category_to_parameter = _category_to_parameter_map(datamodule.parameters_category_dict)
+    _run_plots_for_split(trainer, model, datamodule, "test", category_to_parameter, output_dir, batch_size)
+    _run_plots_for_split(trainer, model, datamodule, "holdout", category_to_parameter, output_dir, batch_size)

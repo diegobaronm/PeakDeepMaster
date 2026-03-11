@@ -1,21 +1,12 @@
 import h5py
 import numpy as np
 
-
-def normalize_input_group_name(name: str) -> str:
-    # Accept both EVENT_PARTICLES and the typo EVENT_PATICLES from config.
-    canonical = name.strip().upper()
-    if canonical == "EVENT_PATICLES":
-        return "EVENT_PARTICLES"
-    return canonical
-
-
 def parse_feature_spec(spec: dict) -> tuple[str, str]:
     ignored_keys = {"transformation", "values_for_training", "values_for_testing"}
     for key, value in spec.items():
         if key in ignored_keys:
             continue
-        return normalize_input_group_name(str(key)), str(value)
+        return str(key), str(value)
     raise ValueError(f"Invalid feature spec: {spec}")
 
 
@@ -31,31 +22,31 @@ def get_feature_from_h5(data_file: h5py.File, group_name: str, variable_name: st
     return data_file["INPUTS"][group_name][variable_name][:]
 
 
-def get_unique_couplings(data: np.ndarray) -> list[float]:
+def get_unique_parameters(data: np.ndarray) -> list[float]:
     return [round(float(elem), 1) for elem in sorted(set(data))]
 
 
-def build_indices_per_coupling(
-    couplings_array: np.ndarray,
-    coupling_values: list[float],
+def build_indices_per_parameter(
+    parameters_array: np.ndarray,
+    parameter_values: list[float],
     max_events_per_parameter: int,
     random_seed: int,
 ) -> dict[float, np.ndarray]:
     np.random.seed(random_seed)
     out = {}
-    for coupling in coupling_values:
-        indices = np.argwhere(np.abs(couplings_array - coupling) < 1e-3).flatten()
+    for parameter in parameter_values:
+        indices = np.argwhere(np.abs(parameters_array - parameter) < 1e-3).flatten()
         if len(indices) > max_events_per_parameter:
             indices = np.random.choice(indices, max_events_per_parameter, replace=False)
-        out[coupling] = indices
+        out[parameter] = indices
     return out
 
 
 def structure_data(
     data_file: h5py.File,
     labels_dataset: np.ndarray,
-    coupling_values: list[float],
-    coupling_values_for_training: list[float],
+    parameter_values: list[float],
+    parameter_values_for_training: list[float],
     observables_config: list[dict],
     parameter_spec: dict,
     weight_spec: dict,
@@ -73,11 +64,11 @@ def structure_data(
     param_group, param_variable = parse_feature_spec(parameter_spec)
     weight_group, weight_variable = parse_feature_spec(weight_spec)
 
-    X_couplings = get_feature_from_h5(data_file, param_group, param_variable)[training_indices]
+    X_parameters = get_feature_from_h5(data_file, param_group, param_variable)[training_indices]
     X_weights = get_feature_from_h5(data_file, weight_group, weight_variable)[training_indices]
 
     feature_index_map[feature_key(param_group, param_variable)] = len(ordered_features)
-    ordered_features.append(X_couplings.reshape(-1, 1))
+    ordered_features.append(X_parameters.reshape(-1, 1))
     feature_index_map[feature_key(weight_group, weight_variable)] = len(ordered_features)
     ordered_features.append(X_weights.reshape(-1, 1))
 
@@ -87,34 +78,34 @@ def structure_data(
     y = y[training_indices]
 
     y_category = np.empty_like(y)
-    couplings_category_dict = {float(c): i for i, c in enumerate(coupling_values)}
+    parameters_category_dict = {float(c): i for i, c in enumerate(parameter_values)}
 
-    for i, coupling_value in enumerate(X_couplings):
-        category = couplings_category_dict[round(float(coupling_value), 1)]
+    for i, parameter_value in enumerate(X_parameters):
+        category = parameters_category_dict[round(float(parameter_value), 1)]
         y_category[i] = category
         if category == 0:
-            X_couplings[i] = coupling_values_for_training[0]
+            X_parameters[i] = parameter_values_for_training[0]
 
-    X[:, feature_index_map[feature_key(param_group, param_variable)]] = X_couplings
+    X[:, feature_index_map[feature_key(param_group, param_variable)]] = X_parameters
 
     y_full = np.concatenate([y.reshape(-1, 1), y_category.reshape(-1, 1)], axis=1)
-    return X, y_full, couplings_category_dict, feature_index_map
+    return X, y_full, parameters_category_dict, feature_index_map
 
 
 def augment_data_for_background(
     X: np.ndarray,
     y: np.ndarray,
-    coupling_values_for_training: list[float],
-    coupling_column_index: int,
+    parameter_values_for_training: list[float],
+    parameter_column_index: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     background_indices = np.argwhere(y[:, 0] == 0).flatten()
     augmented_X = []
     augmented_y = []
 
     for idx in background_indices:
-        for coupling in coupling_values_for_training[1:]:
+        for parameter in parameter_values_for_training[1:]:
             new_x = X[idx].copy()
-            new_x[coupling_column_index] = coupling
+            new_x[parameter_column_index] = parameter
             augmented_X.append(new_x)
             augmented_y.append(y[idx])
 
@@ -152,12 +143,12 @@ def norm_weights_per_category_and_sign(weights: np.ndarray, categories: np.ndarr
     return out
 
 
-def holdout_mask_from_couplings(
+def holdout_mask_from_parameters(
     y_category: np.ndarray,
-    holdout_couplings: list[float],
-    couplings_category_dict: dict[float, int],
+    holdout_parameters: list[float],
+    parameters_category_dict: dict[float, int],
 ) -> np.ndarray:
-    holdout_categories = [couplings_category_dict[c] for c in holdout_couplings if c in couplings_category_dict]
+    holdout_categories = [parameters_category_dict[c] for c in holdout_parameters if c in parameters_category_dict]
     if len(holdout_categories) == 0:
         return np.zeros_like(y_category, dtype=bool)
     return np.isin(y_category, holdout_categories)

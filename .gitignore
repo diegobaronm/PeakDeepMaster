@@ -9,3 +9,5 @@ lightning_logs/
 results/*
 !results/.gitkeep
 outputs/*
+data/*
+!data/.gitkeep
