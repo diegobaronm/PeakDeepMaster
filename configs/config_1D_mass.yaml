@@ -1,0 +1,71 @@
+general:
+  mode: train
+  device: cuda
+  seed: 42
+
+logging:
+  level: INFO
+  format: '%(asctime)s | %(levelname)s | %(name)s | %(message)s'
+  datefmt: '%Y-%m-%d %H:%M:%S'
+  colors: auto
+  file: null
+  capture_warnings: true
+
+dataset:
+  input_h5_path: ../H5Files/Mass_Inference_negW.h5
+  max_events_per_parameter: 700000
+  observables:
+    - EVENT_PATICLES: top1_pt
+      transformation: LogScaler
+    - EVENT_PATICLES: top2_pt
+      transformation: LogScaler
+    - EVENT_PATICLES: top1_eta
+      transformation: StandardScaler
+    - EVENT_PATICLES: top2_eta
+      transformation: StandardScaler
+    - EVENT_GLOBAL: mttbar
+      transformation: StandardScaler
+  parameters:
+    - EVENT_GLOBAL: hmass
+      transformation: MinMaxScaler
+      values_for_training: [600.0, 700.0, 800.0, 900.0, 1000.0]
+      values_for_testing: [650.0, 870.0]
+  weights:
+    - EVENT_GLOBAL: lumiWeight
+  train:
+    num_workers: 10
+    batch_size: 10240
+  val:
+    num_workers: 10
+    batch_size: 10240
+
+
+model:
+  hidden_dim: 64
+  dropout: 0.05
+
+train:
+  n_epochs: 140
+  learning_rate: 0.0002
+  weight_decay: 0.001
+  lr_patience: 10
+  lr_factor: 0.8
+  signal_weight_sign: negative
+  background_weight_sign: positive
+  compile: false
+
+predict:
+  checkpoint_path: lightning_logs/version_0/checkpoints/
+  output_file: results/predictions.csv
+
+performance:
+  checkpoint_path: lightning_logs/version_1/checkpoints/
+  output_dir: results/performance/PN_Model
+  batch_size: 10240
+
+inference:
+  model_pp_checkpoint: lightning_logs/version_0/checkpoints/
+  model_pn_checkpoint: lightning_logs/version_0/checkpoints/
+  theta_min: 500
+  theta_max: 1100
+  n_points: 100

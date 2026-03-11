@@ -1,0 +1,22 @@
+name: peak_deep_master
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - matplotlib
+  - h5py
+  - scikit-learn
+  - ipykernel
+  - pip
+  - pip:
+      - hydra-core
+      - rich
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==v2.7.*
+      - torchvision
+      - torchaudio
+      - lightning==2.5.*
+      - tensorboard
