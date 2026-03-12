@@ -156,9 +156,8 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         y_model = y[~holdout_mask]
 
         logger.info("Splitting data into train, val, and test sets...")
-        stratify_key = y_model[:, 1]
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=self.cfg.general.seed)
-        train_idx, temp_idx = next(sss.split(X_model, stratify_key))
+        train_idx, temp_idx = next(sss.split(X_model, y_model))
 
         X_train, y_train = X_model[train_idx], y_model[train_idx]
         X_temp, y_temp = X_model[temp_idx], y_model[temp_idx]
@@ -172,10 +171,10 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         )
 
         logger.debug("Exporting to TensorDatasets...")
-        self.train_dataset = self._to_dataset(X_train, y_train)
-        self.val_dataset = self._to_dataset(X_val, y_val)
-        self.test_dataset = self._to_dataset(X_test, y_test)
-        self.holdout_dataset = self._to_dataset(self.X_holdout, self.y_holdout)
+        self.train_dataset = self._to_dataset(X_train, y_train, stage=stage)
+        self.val_dataset = self._to_dataset(X_val, y_val, stage=stage)
+        self.test_dataset = self._to_dataset(X_test, y_test, stage=stage)
+        self.holdout_dataset = self._to_dataset(self.X_holdout, self.y_holdout, stage=stage)
 
         logger.info(
             "Prepared datasets: train = %d, val = %d, test = %d, holdout = %d",
@@ -185,9 +184,12 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             0 if self.X_holdout is None else len(self.X_holdout),
         )
 
-    def _to_dataset(self, X: np.ndarray, y: np.ndarray) -> TensorDataset:
+    def _to_dataset(self, X: np.ndarray, y: np.ndarray, stage: str) -> TensorDataset:
         X_tensor = torch.tensor(X, dtype=torch.float32)
         y_tensor = torch.tensor(y, dtype=torch.float32)
+
+        if stage == "inference":
+            return TensorDataset(X_tensor, y_tensor)
 
         filtered_mask = self._sign_mask(X_tensor, y_tensor)
         X_tensor = X_tensor[filtered_mask]

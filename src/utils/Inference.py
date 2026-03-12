@@ -3,6 +3,7 @@ import torch
 from pathlib import Path
 from omegaconf import DictConfig
 import logging
+import matplotlib.pyplot as plt
 
 from src.data.DataHelpers import feature_key, parse_feature_spec
 from src.utils.utils import get_latest_checkpoint_path, load_checkpoint_into_model, resolve_runtime_path
@@ -26,8 +27,7 @@ def rosmm(theta: torch.Tensor, x_obs: torch.Tensor, model_pp, model_pn, c_zero: 
 
 
 def chi_squared(observed: np.ndarray, expected: np.ndarray, expected_variance: np.ndarray) -> float:
-    denom = np.where(expected_variance <= 0, 1e-8, expected_variance)
-    return float(np.sum(((observed - expected) ** 2) / denom))
+    return float(np.sum(((observed - expected) ** 2) / expected_variance))
 
 
 def _hist(values: np.ndarray, weights: np.ndarray, n_bins: int = 50, x_min: float = 500.0, x_max: float = 1200.0):
@@ -54,7 +54,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     pn_ckpt = cfg.inference.model_pn_checkpoint
 
     logger.info("Setting datamodule...")
-    datamodule.setup(stage="infer")
+    datamodule.setup(stage="inference")
 
     model_pp = model_class(cfg)
     model_pn = model_class(cfg)
@@ -71,23 +71,27 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
 
     logger.debug("Finding observable key in transformed features...")
     observable_key = None
+    inverse_observable_transform = None
     param_group, param_variable = parse_feature_spec(datamodule.parameter_spec)
     parameter_transformer_name = f"param_{param_variable}"
     for obs in datamodule.observables_config:
         group_name, variable_name = parse_feature_spec(obs)
         if variable_name == observable:
             observable_key = feature_key(group_name, variable_name)
+            inverse_observable_transform = datamodule.scaler.named_transformers_[f"obs_{observable}"].inverse_transform
             break
     if observable_key is None:
         raise ValueError(f"Inference requires {observable} to be listed in dataset.observables.")
     observable_index = datamodule.transformed_feature_keys.index(observable_key)
 
+    logger.info("Building reference background sample...")
     # Build a reference background sample from test split at high transformed parameter.
     X_test = datamodule.test_dataset.tensors[0].cpu().numpy()
     y_test = datamodule.test_dataset.tensors[1].cpu().numpy()
 
     bg_mask = (y_test[:, 0] == 0) & (X_test[:, parameter_index] >= 0.98)
     X_ref = X_test[bg_mask]
+    X_ref_inverted = inverse_observable_transform(X_ref[:, observable_index].reshape(-1, 1)).flatten()
 
     # Pick first holdout parameter as hypothesis if available.
     if datamodule.X_holdout is None or len(datamodule.X_holdout) == 0:
@@ -95,11 +99,26 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
 
     X_hyp = datamodule.X_holdout
     y_hyp = datamodule.y_holdout
-    signal_holdout = X_hyp[y_hyp[:, 0] == 1]
 
-    hypothesis_shape, hypothesis_var, _ = _hist(
-        signal_holdout[:, observable_index], np.abs(signal_holdout[:, weight_index])
+    holdout_category =  datamodule.parameters_category_dict[cfg.inference.truth_parameter]
+    signal_holdout = X_hyp[y_hyp[:, 0] == 1 & (y_hyp[:, 1] == holdout_category)]
+    logger.info("Reversing transformation...")
+    signal_holdout[:, observable_index] = inverse_observable_transform(signal_holdout[:, observable_index].reshape(-1, 1)).flatten()
+
+
+    logger.info("Generating hypotheis plot...")
+    hypothesis_shape, hypothesis_var, hypothesis_edges = _hist(
+        signal_holdout[:, observable_index], signal_holdout[:, weight_index]
     )
+    logger.debug(hypothesis_shape)
+    logger.debug(hypothesis_var)
+    logger.debug(hypothesis_edges)
+    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    plt.title("Hypothesis shape")
+    plt.xlabel("%s [GeV]" % observable)
+    plt.ylabel("Events")
+    plt.legend()
+    plt.savefig(output_dir / "hypothesis_shape.png")
 
     theta_scan = np.linspace(cfg.inference.theta_min, cfg.inference.theta_max, cfg.inference.n_points)
     chi2_values = []
@@ -109,25 +128,85 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     y_train = datamodule.train_dataset.tensors[1].cpu().numpy()
     bg_train = y_train[:, 0] == 0
     sig_train = y_train[:, 0] == 1
+    bg_train_pos = bg_train & (X_train[:, weight_index] >= 0)
+    sig_train_pos = sig_train & (X_train[:, weight_index] >= 0)
 
+    logger.debug("N BG %d", bg_train.sum())
+    logger.debug("N SIG %d", sig_train.sum())
+    logger.debug("N BG w>0 %d", bg_train_pos.sum())
+    logger.debug("N SIG w>0 %d", sig_train_pos.sum())
+
+    logger.info("Estimating RoSMM C0 and C1 from training data...")
     c_zero = float(
-        X_train[bg_train & (X_train[:, weight_index] >= 0), weight_index].sum() / X_train[bg_train, weight_index].sum()
+        X_train[bg_train_pos, weight_index].sum() / X_train[bg_train, weight_index].sum()
     )
+    logger.info(f"Estimated C0: {c_zero:.4f}")
     c_one = float(
-        X_train[sig_train & (X_train[:, weight_index] >= 0), weight_index].sum() / X_train[sig_train, weight_index].sum()
+        X_train[sig_train_pos, weight_index].sum() / X_train[sig_train, weight_index].sum()
     )
+    logger.info(f"Estimated C1: {c_one:.4f}")
 
     x_ref_tensor = torch.tensor(X_ref[:, x_indices], dtype=torch.float32)
 
+    logger.info("Running inference scan...")
+    counter = 1
+    rosmm_sign = cfg.inference.rosmm_sign
+    if (abs(rosmm_sign) - 1) > 0.0001:
+        log.error("Only +/- 1.0 values can be passed as RoSMM sign.")
+        raise ValueError(f"{rosmm_sign} is not a valid value for RoSMM sign.")
     for theta in theta_scan:
         theta_scaled = datamodule.scaler.named_transformers_[parameter_transformer_name].transform([[theta]])[0, 0]
         theta_tensor = torch.tensor([theta_scaled], dtype=torch.float32)
 
-        rew = -1.0 * rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
-        rew = rew / (np.abs(rew).sum() / max(np.abs(hypothesis_shape).sum(), 1e-8))
+        rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
+        rew = rosmm_sign * rew / (np.abs(rew).sum() / np.abs(hypothesis_shape).sum())
 
-        infer_shape, infer_var, _ = _hist(X_ref[:, observable_index], rew)
+
+        infer_shape, infer_var, _ = _hist(X_ref_inverted, rew)
+        # Reset plot
+        plt.clf()
+        plt.stairs(infer_shape, hypothesis_edges, label="Inference shape")
+        plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+        plt.title("Inference shape %s = %s" % (param_variable, str(theta)))
+        plt.xlabel("%s [GeV]" % observable)
+        plt.ylabel("Events")
+        plt.legend()
+        plot_name = "hypothesis_shape_%d.png" % counter
+        plt.savefig(output_dir / plot_name)
         chi2_values.append(chi_squared(hypothesis_shape, infer_shape, infer_var))
+        counter+=1
 
     best_idx = int(np.argmin(chi2_values))
-    print(f"Best theta: {theta_scan[best_idx]:.4f}, chi2={chi2_values[best_idx]:.4f}")
+    logger.info(f"Best theta: {theta_scan[best_idx]:.4f}, chi2={chi2_values[best_idx]:.4f}")
+
+    logger.info("Generating chi2 plot...")
+    plt.clf()
+    plt.plot(theta_scan, chi2_values)
+    plt.xlabel(param_variable)
+    plt.ylabel("Chi2")
+    plt.xlim((min(theta_scan),max(theta_scan)))
+    plt.yscale('log')
+    plt.ylim((min(chi2_values)/10, max(chi2_values)*10))
+    plt.savefig(output_dir / "chi2_scan.png")
+
+    logger.info("Generating review plot...")
+    plt.clf()
+    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    theta_scaled = datamodule.scaler.named_transformers_[parameter_transformer_name].transform([[theta_scan[best_idx]]])[0, 0]
+    theta_tensor = torch.tensor([theta_scaled], dtype=torch.float32)
+    rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
+    rew = rosmm_sign * rew / (np.abs(rew).sum() / np.abs(hypothesis_shape).sum())
+    best_infer_shape, best_infer_var, _ = _hist(X_ref_inverted, rew)
+    plt.stairs(best_infer_shape, hypothesis_edges, label="Inference shape - %s = %.4f" % (param_variable, theta_scan[best_idx]))
+    theta_scaled = datamodule.scaler.named_transformers_[parameter_transformer_name].transform([[cfg.inference.truth_parameter]])[0, 0]
+    theta_tensor = torch.tensor([theta_scaled], dtype=torch.float32)
+    rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
+    rew = rosmm_sign * rew / (np.abs(rew).sum() / np.abs(hypothesis_shape).sum())
+    truth_infer_shape, truth_infer_var, _ = _hist(X_ref_inverted, rew)
+    plt.stairs(truth_infer_shape, hypothesis_edges, label="Inference shape - truth %s = %.4f" % (param_variable, cfg.inference.truth_parameter))
+    plt.title("Inference shape comparison")
+    plt.xlabel("%s [GeV]" % observable)
+    plt.ylabel("Events")
+    plt.legend()
+    plt.savefig(output_dir / "inference_review.png")
+

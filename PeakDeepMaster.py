@@ -35,7 +35,7 @@ def main(cfg: DictConfig) -> None:
             predict(datamodule, LLHRatioEstimator, cfg)
         elif cfg.general.mode == "performance":
             testing(datamodule, LLHRatioEstimator, cfg)
-        elif cfg.general.mode == "infer":
+        elif cfg.general.mode == "inference":
             run_inference(datamodule, LLHRatioEstimator, cfg)
         else:
             raise ValueError(f"Unsupported mode: {cfg.general.mode}")
