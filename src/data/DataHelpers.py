@@ -134,18 +134,18 @@ def augment_data_for_background(
     parameter_column_indices: list[int],
 ) -> tuple[np.ndarray, np.ndarray]:
     background_indices = np.argwhere(y[:, 0] == 0).flatten()
+    logger.debug("Augmenting data for background: found %d background samples", len(background_indices))
     augmented_X = []
     augmented_y = []
-
     logger.debug("Augmenting data with training parameter grid: %s", training_parameter_grid)
 
     for idx in background_indices:
-        # This is the default parameter point for BG -> Usually all zeros.
-        current_point = normalize_parameter_point(X[idx, parameter_column_indices])
+        doing_first_parameter_point = True
         for parameter_point in training_parameter_grid:
             # We want to replace the default parameter point with the first training parameter point.
-            if parameter_point == current_point:
+            if doing_first_parameter_point:
                 X[idx, parameter_column_indices] = np.asarray(parameter_point, dtype=float)
+                doing_first_parameter_point = False
             else: # For all the others we create a new data point with the same features but the new parameter point.
                 new_x = X[idx].copy()
                 new_x[parameter_column_indices] = np.asarray(parameter_point, dtype=float)

@@ -4,7 +4,7 @@ general:
   seed: 42
 
 logging:
-  level: DEBUG
+  level: INFO
   format: '%(asctime)s | %(levelname)s | %(name)s | %(message)s'
   datefmt: '%Y-%m-%d %H:%M:%S'
   colors: auto

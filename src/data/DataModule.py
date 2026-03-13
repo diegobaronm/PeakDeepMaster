@@ -215,9 +215,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         logger.debug("Data_wo_holdout[5000000] example: %s", X_model[5000000])
 
         logger.info("Splitting data into train, val, and test sets...")
-        stratify_model = self._build_stratify_labels(y_model)
+        stratify_model = y_model[:, 1] # self._build_stratify_labels(y_model)
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=self.cfg.general.seed)
-        train_idx, temp_idx = next(sss.split(X_model, y_model))
+        train_idx, temp_idx = next(sss.split(X_model, stratify_model))
 
         X_train, y_train = X_model[train_idx], y_model[train_idx]
         X_temp, y_temp = X_model[temp_idx], y_model[temp_idx]
