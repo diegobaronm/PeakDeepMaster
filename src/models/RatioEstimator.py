@@ -36,18 +36,20 @@ class LLHRatioEstimator(L.LightningModule):
 
         self.model = RatioEstimatorNet(
             x_dim=len(cfg.dataset.observables),
-            theta_dim=1,
+            theta_dim=len(cfg.dataset.parameters),
             hidden_dim=cfg.model.hidden_dim,
             dropout=cfg.model.dropout,
         )
         self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
         self.x_column_indices = None
+        self.parameter_column_indices = None
         self.parameter_column_index = None
         self.weight_column_index = None
 
     def setup(self, stage: str | None = None):
         dm = self.trainer.datamodule
         self.x_column_indices = list(dm.x_column_indices)
+        self.parameter_column_indices = list(dm.parameter_column_indices)
         self.parameter_column_index = int(dm.parameter_column_index)
         self.weight_column_index = int(dm.weight_column_index)
 
@@ -56,7 +58,7 @@ class LLHRatioEstimator(L.LightningModule):
         y_true = targets[:, 0]
 
         x = inputs[:, self.x_column_indices]
-        theta = inputs[:, self.parameter_column_index].unsqueeze(1)
+        theta = inputs[:, self.parameter_column_indices]
         event_weights = torch.abs(inputs[:, self.weight_column_index])
 
         logits = self.model(x, theta).squeeze()
@@ -85,7 +87,7 @@ class LLHRatioEstimator(L.LightningModule):
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         inputs, targets = batch
         x = inputs[:, self.x_column_indices]
-        theta = inputs[:, self.parameter_column_index].unsqueeze(1)
+        theta = inputs[:, self.parameter_column_indices]
         logits = self.model(x, theta)
         return {
             "predictions": torch.sigmoid(logits),

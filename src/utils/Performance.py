@@ -8,6 +8,7 @@ from omegaconf import DictConfig
 from sklearn.metrics import auc, roc_curve
 from torch.utils.data import DataLoader
 
+from src.data.DataHelpers import parameter_point_label, parameter_point_slug
 from src.utils.utils import (
     ensure_parent_dir,
     get_latest_checkpoint_path,
@@ -17,8 +18,22 @@ from src.utils.utils import (
 )
 
 
-def _category_to_parameter_map(parameters_category_dict: dict[float, int]) -> dict[int, float]:
-    return {int(category): float(parameter) for parameter, category in parameters_category_dict.items()}
+def _category_to_parameter_map(parameters_category_dict: dict[tuple[float, ...], int]) -> dict[int, tuple[float, ...]]:
+    return {int(category): tuple(parameter) for parameter, category in parameters_category_dict.items()}
+
+
+def _category_label(category_to_parameter: dict[int, tuple[float, ...]], parameter_names: list[str], category: int) -> str:
+    parameter_point = category_to_parameter.get(category)
+    if parameter_point is None:
+        return f"category={category}"
+    return parameter_point_label(parameter_names, parameter_point)
+
+
+def _category_slug(category_to_parameter: dict[int, tuple[float, ...]], parameter_names: list[str], category: int) -> str:
+    parameter_point = category_to_parameter.get(category)
+    if parameter_point is None:
+        return f"category_{category}"
+    return parameter_point_slug(parameter_names, parameter_point)
 
 
 def _collect_predictions(trainer, model, dataset, batch_size: int) -> dict[str, np.ndarray] | None:
@@ -47,7 +62,8 @@ def _plot_score_distributions(
     scores: np.ndarray,
     labels: np.ndarray,
     categories: np.ndarray,
-    category_to_parameter: dict[int, float],
+    category_to_parameter: dict[int, tuple[float, ...]],
+    parameter_names: list[str],
     split_name: str,
     output_dir: Path,
 ) -> None:
@@ -75,9 +91,9 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        parameter = category_to_parameter.get(category, float(category))
+        label = _category_label(category_to_parameter, parameter_names, category)
         plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0))
-        legend_labels.append(f"S c={parameter:.2f}")
+        legend_labels.append(f"S {label}")
 
     plt.xlabel("Predicted Scores")
     plt.ylabel("Density")
@@ -96,7 +112,8 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        parameter = category_to_parameter.get(category, float(category))
+        label = _category_label(category_to_parameter, parameter_names, category)
+        slug = _category_slug(category_to_parameter, parameter_names, category)
         plt.figure(figsize=(8, 5))
         plt.hist(
             background_scores,
@@ -108,14 +125,14 @@ def _plot_score_distributions(
             linewidth=2.5,
             range=(0.0, 1.0),
         )
-        plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0), label=f"Signal c={parameter:.2f}")
+        plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0), label=f"Signal {label}")
         plt.xlabel("Predicted Scores")
         plt.ylabel("Density")
-        plt.title(f"{split_name.title()} scores: background vs c={parameter:.2f}")
+        plt.title(f"{split_name.title()} scores: background vs {label}")
         plt.yscale("log")
         plt.legend(loc="upper right")
         plt.tight_layout()
-        plt.savefig(by_category_dir / f"scores_{split_name}_c{parameter:.2f}.png", dpi=200, bbox_inches="tight")
+        plt.savefig(by_category_dir / f"scores_{split_name}_{slug}.png", dpi=200, bbox_inches="tight")
         plt.close()
 
 
@@ -123,7 +140,8 @@ def _plot_roc_curves(
     scores: np.ndarray,
     labels: np.ndarray,
     categories: np.ndarray,
-    category_to_parameter: dict[int, float],
+    category_to_parameter: dict[int, tuple[float, ...]],
+    parameter_names: list[str],
     split_name: str,
     output_dir: Path,
 ) -> None:
@@ -154,14 +172,15 @@ def _plot_roc_curves(
 
         fpr, tpr, _ = roc_curve(selected_labels, selected_scores)
         roc_auc = auc(fpr, tpr)
-        parameter = category_to_parameter.get(category, float(category))
+        label = _category_label(category_to_parameter, parameter_names, category)
+        slug = _category_slug(category_to_parameter, parameter_names, category)
 
-        plt.plot(fpr, tpr, lw=2, label=f"AUC = {roc_auc:.3f} -- c = {parameter:.2f}")
+        plt.plot(fpr, tpr, lw=2, label=f"AUC = {roc_auc:.3f} -- {label}")
         roc_rows.append(
             {
                 "split": split_name,
                 "category": int(category),
-                "parameter": parameter,
+                "parameter_point": label,
                 "auc": float(roc_auc),
                 "signal_count": int(category_mask.sum()),
                 "background_count": int(background_mask.sum()),
@@ -175,10 +194,10 @@ def _plot_roc_curves(
         plt.ylim(0.0, 1.05)
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
-        plt.title(f"{split_name.title()} ROC: background vs c={parameter:.2f}")
+        plt.title(f"{split_name.title()} ROC: background vs {label}")
         plt.legend(loc="lower right")
         plt.tight_layout()
-        plt.savefig(by_category_dir / f"roc_{split_name}_c{parameter:.2f}.png", dpi=200, bbox_inches="tight")
+        plt.savefig(by_category_dir / f"roc_{split_name}_{slug}.png", dpi=200, bbox_inches="tight")
         plt.close(plt_single)
 
     plt.legend(loc="lower right")
@@ -195,7 +214,7 @@ def _run_plots_for_split(
     model,
     datamodule,
     split_name: str,
-    category_to_parameter: dict[int, float],
+    category_to_parameter: dict[int, tuple[float, ...]],
     output_dir: Path,
     batch_size: int,
 ) -> None:
@@ -216,6 +235,7 @@ def _run_plots_for_split(
         labels=predictions["labels"],
         categories=predictions["categories"],
         category_to_parameter=category_to_parameter,
+        parameter_names=datamodule.parameter_names,
         split_name=split_name,
         output_dir=split_output_dir,
     )
@@ -224,6 +244,7 @@ def _run_plots_for_split(
         labels=predictions["labels"],
         categories=predictions["categories"],
         category_to_parameter=category_to_parameter,
+        parameter_names=datamodule.parameter_names,
         split_name=split_name,
         output_dir=split_output_dir,
     )

@@ -34,4 +34,5 @@ def train(datamodule, model_class, cfg: DictConfig) -> None:
         logger=train_logger,
     )
 
+    torch.set_float32_matmul_precision('high')
     trainer.fit(model=model, datamodule=datamodule)

@@ -30,7 +30,7 @@ def get_transformer_by_name(name: str):
 
 def build_feature_scaler(
     observables_config: list[dict],
-    parameter_spec: dict,
+    parameter_specs: list[dict],
     weight_spec: dict,
 ) -> tuple[ColumnTransformer, list[str]]:
     transformers = []
@@ -45,12 +45,13 @@ def build_feature_scaler(
         ordered_feature_keys.append(f"{group_name}:{variable_name}")
         column_idx += 1
 
-    param_group, param_variable = parse_feature_spec(parameter_spec)
-    param_name = f"param_{param_variable}"
-    param_transformation = parameter_spec.get("transformation", "MinMaxScaler")
-    transformers.append((param_name, get_transformer_by_name(param_transformation), [column_idx]))
-    ordered_feature_keys.append(f"{param_group}:{param_variable}")
-    column_idx += 1
+    for parameter_spec in parameter_specs:
+        param_group, param_variable = parse_feature_spec(parameter_spec)
+        param_name = f"param_{param_variable}"
+        param_transformation = parameter_spec.get("transformation", "MinMaxScaler")
+        transformers.append((param_name, get_transformer_by_name(param_transformation), [column_idx]))
+        ordered_feature_keys.append(f"{param_group}:{param_variable}")
+        column_idx += 1
 
     weight_group, weight_variable = parse_feature_spec(weight_spec)
     weight_name = f"weight_{weight_variable}"

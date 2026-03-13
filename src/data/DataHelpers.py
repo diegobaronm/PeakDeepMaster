@@ -1,5 +1,15 @@
+import itertools
 import h5py
 import numpy as np
+
+PARAMETER_DECIMALS = 6
+
+def normalize_parameter_value(value: float) -> float:
+    return round(float(value), PARAMETER_DECIMALS)
+
+def normalize_parameter_point(values) -> tuple[float, ...]:
+    array = np.asarray(values, dtype=float).reshape(-1)
+    return tuple(normalize_parameter_value(value) for value in array)
 
 def parse_feature_spec(spec: dict) -> tuple[str, str]:
     ignored_keys = {"transformation", "values_for_training", "values_for_testing"}
@@ -9,49 +19,74 @@ def parse_feature_spec(spec: dict) -> tuple[str, str]:
         return str(key), str(value)
     raise ValueError(f"Invalid feature spec: {spec}")
 
-
 def normalize_feature_specs(specs) -> list[dict]:
     return [dict(spec) for spec in specs]
-
 
 def feature_key(group_name: str, variable_name: str) -> str:
     return f"{group_name}:{variable_name}"
 
+def parameter_name_from_spec(spec: dict) -> str:
+    _, variable_name = parse_feature_spec(spec)
+    return variable_name
 
 def get_feature_from_h5(data_file: h5py.File, group_name: str, variable_name: str) -> np.ndarray:
     return data_file["INPUTS"][group_name][variable_name][:]
 
 
-def get_unique_parameters(data: np.ndarray) -> list[float]:
-    return [round(float(elem), 1) for elem in sorted(set(data))]
+def extract_parameter_axes(parameter_specs: list[dict], values_key: str) -> list[list[float]]:
+    axes = []
+    for spec in parameter_specs:
+        axis = [normalize_parameter_value(value) for value in spec.get(values_key, [])]
+        if values_key == "values_for_training" and len(axis) == 0:
+            name = parameter_name_from_spec(spec)
+            raise ValueError(f"values_for_training must be provided for parameter '{name}'")
+        axes.append(axis)
+    return axes
 
 
-def build_indices_per_parameter(
-    parameters_array: np.ndarray,
-    parameter_values: list[float],
+def build_parameter_grid(parameter_specs: list[dict], values_key: str = "values_for_training") -> list[tuple[float, ...]]:
+    axes = extract_parameter_axes(parameter_specs, values_key)
+    if len(axes) == 0:
+        return []
+    return [normalize_parameter_point(point) for point in itertools.product(*axes)]
+
+
+def get_unique_parameter_points(parameter_matrix: np.ndarray) -> list[tuple[float, ...]]:
+    normalized = [normalize_parameter_point(row) for row in np.asarray(parameter_matrix, dtype=float)]
+    return sorted(set(normalized))
+
+
+def build_indices_per_parameter_point(
+    parameter_matrix: np.ndarray,
+    parameter_points: list[tuple[float, ...]],
     max_events_per_parameter: int,
     random_seed: int,
-) -> dict[float, np.ndarray]:
-    np.random.seed(random_seed)
+) -> dict[tuple[float, ...], np.ndarray]:
+    rng = np.random.default_rng(random_seed)
+    normalized_points = np.asarray(
+        [normalize_parameter_point(point) for point in np.asarray(parameter_matrix, dtype=float)],
+        dtype=float,
+    )
+
     out = {}
-    for parameter in parameter_values:
-        indices = np.argwhere(np.abs(parameters_array - parameter) < 1e-3).flatten()
+    for point in parameter_points:
+        point_array = np.asarray(point, dtype=float)
+        indices = np.argwhere(np.all(np.isclose(normalized_points, point_array, atol=1e-6), axis=1)).flatten()
         if len(indices) > max_events_per_parameter:
-            indices = np.random.choice(indices, max_events_per_parameter, replace=False)
-        out[parameter] = indices
+            indices = rng.choice(indices, max_events_per_parameter, replace=False)
+        out[point] = indices
     return out
 
 
 def structure_data(
     data_file: h5py.File,
     labels_dataset: np.ndarray,
-    parameter_values: list[float],
-    parameter_values_for_training: list[float],
+    parameter_points: list[tuple[float, ...]],
     observables_config: list[dict],
-    parameter_spec: dict,
+    parameter_specs: list[dict],
     weight_spec: dict,
     training_indices: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, dict[float, int], dict[str, int]]:
+) -> tuple[np.ndarray, np.ndarray, dict[tuple[float, ...], int], dict[str, int]]:
     ordered_features = []
     feature_index_map = {}
 
@@ -61,51 +96,51 @@ def structure_data(
         feature_index_map[feature_key(group_name, variable_name)] = len(ordered_features)
         ordered_features.append(values.reshape(-1, 1))
 
-    param_group, param_variable = parse_feature_spec(parameter_spec)
+    parameter_columns = []
+    for parameter_spec in parameter_specs:
+        param_group, param_variable = parse_feature_spec(parameter_spec)
+        parameter_values = get_feature_from_h5(data_file, param_group, param_variable)[training_indices]
+        feature_index_map[feature_key(param_group, param_variable)] = len(ordered_features)
+        ordered_features.append(parameter_values.reshape(-1, 1))
+        parameter_columns.append(parameter_values.reshape(-1, 1))
+
     weight_group, weight_variable = parse_feature_spec(weight_spec)
-
-    X_parameters = get_feature_from_h5(data_file, param_group, param_variable)[training_indices]
-    X_weights = get_feature_from_h5(data_file, weight_group, weight_variable)[training_indices]
-
-    feature_index_map[feature_key(param_group, param_variable)] = len(ordered_features)
-    ordered_features.append(X_parameters.reshape(-1, 1))
+    weight_values = get_feature_from_h5(data_file, weight_group, weight_variable)[training_indices]
     feature_index_map[feature_key(weight_group, weight_variable)] = len(ordered_features)
-    ordered_features.append(X_weights.reshape(-1, 1))
+    ordered_features.append(weight_values.reshape(-1, 1))
 
     X = np.concatenate(ordered_features, axis=1)
-    y = labels_dataset
+    y = labels_dataset[training_indices]
 
-    y = y[training_indices]
-
-    y_category = np.empty_like(y)
-    parameters_category_dict = {float(c): i for i, c in enumerate(parameter_values)}
-
-    for i, parameter_value in enumerate(X_parameters):
-        category = parameters_category_dict[round(float(parameter_value), 1)]
-        y_category[i] = category
-        if category == 0:
-            X_parameters[i] = parameter_values_for_training[0]
-
-    X[:, feature_index_map[feature_key(param_group, param_variable)]] = X_parameters
+    parameter_matrix = np.concatenate(parameter_columns, axis=1)
+    parameter_point_to_category = {point: i for i, point in enumerate(parameter_points)}
+    y_category = np.asarray(
+        [parameter_point_to_category[normalize_parameter_point(point)] for point in parameter_matrix],
+        dtype=int,
+    )
 
     y_full = np.concatenate([y.reshape(-1, 1), y_category.reshape(-1, 1)], axis=1)
-    return X, y_full, parameters_category_dict, feature_index_map
+    return X, y_full, parameter_point_to_category, feature_index_map
 
 
 def augment_data_for_background(
     X: np.ndarray,
     y: np.ndarray,
-    parameter_values_for_training: list[float],
-    parameter_column_index: int,
+    training_parameter_grid: list[tuple[float, ...]],
+    parameter_column_indices: list[int],
 ) -> tuple[np.ndarray, np.ndarray]:
     background_indices = np.argwhere(y[:, 0] == 0).flatten()
     augmented_X = []
     augmented_y = []
 
     for idx in background_indices:
-        for parameter in parameter_values_for_training[1:]:
+        current_point = normalize_parameter_point(X[idx, parameter_column_indices])
+        for parameter_point in training_parameter_grid:
+            if parameter_point == current_point:
+                continue
+
             new_x = X[idx].copy()
-            new_x[parameter_column_index] = parameter
+            new_x[parameter_column_indices] = np.asarray(parameter_point, dtype=float)
             augmented_X.append(new_x)
             augmented_y.append(y[idx])
 
@@ -143,12 +178,34 @@ def norm_weights_per_category_and_sign(weights: np.ndarray, categories: np.ndarr
     return out
 
 
-def holdout_mask_from_parameters(
-    y_category: np.ndarray,
-    holdout_parameters: list[float],
-    parameters_category_dict: dict[float, int],
-) -> np.ndarray:
-    holdout_categories = [parameters_category_dict[c] for c in holdout_parameters if c in parameters_category_dict]
-    if len(holdout_categories) == 0:
-        return np.zeros_like(y_category, dtype=bool)
-    return np.isin(y_category, holdout_categories)
+def holdout_mask_from_parameter_matrix(parameter_matrix: np.ndarray, parameter_specs: list[dict]) -> np.ndarray:
+    parameter_matrix = np.asarray(parameter_matrix, dtype=float)
+    if parameter_matrix.ndim == 1:
+        parameter_matrix = parameter_matrix.reshape(-1, 1)
+
+    holdout_mask = np.zeros(parameter_matrix.shape[0], dtype=bool)
+    for column_index, spec in enumerate(parameter_specs):
+        holdout_values = [normalize_parameter_value(value) for value in spec.get("values_for_testing", [])]
+        if len(holdout_values) == 0:
+            continue
+        holdout_mask |= np.isin(
+            np.round(parameter_matrix[:, column_index], PARAMETER_DECIMALS),
+            holdout_values,
+        )
+    return holdout_mask
+
+
+def parameter_point_label(parameter_names: list[str], point: tuple[float, ...]) -> str:
+    normalized_point = normalize_parameter_point(point)
+    if len(parameter_names) == 1:
+        return f"{parameter_names[0]}={normalized_point[0]:g}"
+    return ", ".join(f"{name}={value:g}" for name, value in zip(parameter_names, normalized_point))
+
+
+def parameter_point_slug(parameter_names: list[str], point: tuple[float, ...]) -> str:
+    normalized_point = normalize_parameter_point(point)
+    parts = []
+    for name, value in zip(parameter_names, normalized_point):
+        encoded = f"{value:g}".replace("-", "m").replace(".", "p")
+        parts.append(f"{name}_{encoded}")
+    return "__".join(parts)

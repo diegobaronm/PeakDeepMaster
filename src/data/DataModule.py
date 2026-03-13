@@ -8,12 +8,15 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.data.DataHelpers import (
     augment_data_for_background,
-    build_indices_per_parameter,
+    build_indices_per_parameter_point,
+    build_parameter_grid,
+    extract_parameter_axes,
     feature_key,
-    get_unique_parameters,
-    holdout_mask_from_parameters,
+    get_unique_parameter_points,
+    holdout_mask_from_parameter_matrix,
     normalize_feature_specs,
     norm_weights_per_category_and_sign,
+    parameter_name_from_spec,
     parse_feature_spec,
     structure_data,
 )
@@ -41,18 +44,27 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         parameter_specs = normalize_feature_specs(cfg.dataset.parameters)
         weight_specs = normalize_feature_specs(cfg.dataset.weights)
 
-        if len(parameter_specs) != 1:
-            raise ValueError("Exactly one entry is currently supported in dataset.parameters")
+        if len(parameter_specs) == 0:
+            raise ValueError("At least one entry must be provided in dataset.parameters")
         if len(weight_specs) != 1:
             raise ValueError("Exactly one entry is currently supported in dataset.weights")
 
+        self.parameter_specs = parameter_specs
         self.parameter_spec = parameter_specs[0]
-        logger.debug("Parameter spec: %s", self.parameter_spec)
+        logger.debug("Parameter specs: %s", self.parameter_specs)
         self.weight_spec = weight_specs[0]
-        self.parameter_values_for_training = list(self.parameter_spec.get("values_for_training", []))
-        self.holdout_parameters = list(self.parameter_spec.get("values_for_testing", []))
-        if len(self.parameter_values_for_training) == 0:
-            raise ValueError("values_for_training must be provided in dataset.parameters[0]")
+        self.parameter_names = [parameter_name_from_spec(spec) for spec in self.parameter_specs]
+        self.parameter_axes = {
+            name: axis
+            for name, axis in zip(self.parameter_names, extract_parameter_axes(self.parameter_specs, "values_for_training"))
+        }
+        self.holdout_parameter_axes = {
+            name: axis
+            for name, axis in zip(self.parameter_names, extract_parameter_axes(self.parameter_specs, "values_for_testing"))
+        }
+        self.training_parameter_grid = build_parameter_grid(self.parameter_specs, "values_for_training")
+        if len(self.training_parameter_grid) == 0:
+            raise ValueError("values_for_training must be provided in dataset.parameters")
 
         self.random_seed = int(getattr(cfg.dataset, "random_seed", cfg.general.seed))
 
@@ -61,13 +73,22 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         self.scaler = None
         self.parameters_category_dict = {}
+        self.parameter_point_to_category = {}
+        self.category_to_parameter_point = {}
         self.feature_index_map = {}
         self.transformed_feature_keys = []
+        self.parameter_column_indices = []
+        self.parameter_transformer_names = []
 
         self.X_holdout = None
         self.y_holdout = None
         self.holdout_dataset = None
         self._has_setup = False
+
+    def _build_stratify_labels(self, y: np.ndarray) -> np.ndarray:
+        labels = y[:, 0].astype(int)
+        categories = y[:, 1].astype(int)
+        return np.asarray([f"{label}_{category}" for label, category in zip(labels, categories)])
 
     def setup(self, stage: str | None = None):
         if self._has_setup:
@@ -78,37 +99,55 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         with h5py.File(self.input_h5_path, "r") as data_file:
             labels_dataset = data_file["LABELS"]["CLASS"][:]
-            parameter_group, parameter_variable = parse_feature_spec(self.parameter_spec)
-            parameters_array = data_file["INPUTS"][parameter_group][parameter_variable][:]
+            parameter_arrays = []
+            for parameter_spec in self.parameter_specs:
+                parameter_group, parameter_variable = parse_feature_spec(parameter_spec)
+                parameter_arrays.append(data_file["INPUTS"][parameter_group][parameter_variable][:])
 
-            parameter_values = get_unique_parameters(parameters_array)
-            logger.debug("Unique parameter values in dataset: %s", parameter_values)
-            indices_per_parameter = build_indices_per_parameter(
-                parameters_array=parameters_array,
-                parameter_values=parameter_values,
+            parameter_matrix = np.column_stack(parameter_arrays)
+            parameter_points = get_unique_parameter_points(parameter_matrix)
+            logger.debug("Unique parameter points in dataset: %s", parameter_points)
+            missing_training_points = sorted(set(self.training_parameter_grid) - set(parameter_points))
+            if missing_training_points:
+                logger.warning(
+                    "Configured training grid contains %d parameter point(s) missing from the dataset: %s",
+                    len(missing_training_points),
+                    missing_training_points,
+                )
+            indices_per_parameter = build_indices_per_parameter_point(
+                parameter_matrix=parameter_matrix,
+                parameter_points=parameter_points,
                 max_events_per_parameter=self.max_events_per_parameter,
                 random_seed=self.random_seed,
             )
             training_indices = np.concatenate(list(indices_per_parameter.values()))
 
             logger.debug("Structuring the data..")
-            X, y, self.parameters_category_dict, self.feature_index_map = structure_data(
+            X, y, self.parameter_point_to_category, self.feature_index_map = structure_data(
                 data_file=data_file,
                 labels_dataset=labels_dataset,
-                parameter_values=parameter_values,
-                parameter_values_for_training=self.parameter_values_for_training,
+                parameter_points=parameter_points,
                 observables_config=self.observables_config,
-                parameter_spec=self.parameter_spec,
+                parameter_specs=self.parameter_specs,
                 weight_spec=self.weight_spec,
                 training_indices=training_indices,
             )
+            self.parameters_category_dict = dict(self.parameter_point_to_category)
+            self.category_to_parameter_point = {
+                category: point for point, category in self.parameter_point_to_category.items()
+            }
             logger.debug("Data[0] example: %s", X[1])
 
-        param_group, param_variable = parse_feature_spec(self.parameter_spec)
         weight_group, weight_variable = parse_feature_spec(self.weight_spec)
-        parameter_column_index = self.feature_index_map[feature_key(param_group, param_variable)]
+        parameter_feature_keys = []
+        parameter_column_indices = []
+        for parameter_spec in self.parameter_specs:
+            param_group, param_variable = parse_feature_spec(parameter_spec)
+            key = feature_key(param_group, param_variable)
+            parameter_feature_keys.append(key)
+            parameter_column_indices.append(self.feature_index_map[key])
         weight_column_index = self.feature_index_map[feature_key(weight_group, weight_variable)]
-        
+
         logger.debug("Normalizing weights...")
         X[:, weight_column_index] = norm_weights_per_category_and_sign(X[:, weight_column_index], y[:, -1])
         logger.debug("Data[0] example: %s", X[1])
@@ -117,15 +156,17 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         X, y = augment_data_for_background(
             X,
             y,
-            self.parameter_values_for_training,
-            parameter_column_index=parameter_column_index,
+            self.training_parameter_grid,
+            parameter_column_indices=parameter_column_indices,
         )
         logger.debug("Data[0] example: %s", X[1])
+
+        parameter_matrix_for_holdout = X[:, parameter_column_indices].copy()
 
         logger.debug("Building feature scaler...")
         self.scaler, self.transformed_feature_keys = build_feature_scaler(
             self.observables_config,
-            self.parameter_spec,
+            self.parameter_specs,
             self.weight_spec,
         )
 
@@ -133,7 +174,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         X = self.scaler.fit_transform(X)
         logger.debug("Data[0] example: %s", X[1])
 
-        self.parameter_column_index = self.transformed_feature_keys.index(feature_key(param_group, param_variable))
+        self.parameter_column_indices = [self.transformed_feature_keys.index(key) for key in parameter_feature_keys]
+        self.parameter_column_index = self.parameter_column_indices[0]
+        self.parameter_transformer_names = [f"param_{name}" for name in self.parameter_names]
         self.weight_column_index = self.transformed_feature_keys.index(feature_key(weight_group, weight_variable))
 
         self.observable_column_indices = []
@@ -144,10 +187,8 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         self.x_column_indices = list(self.observable_column_indices)
 
-        logger.debug("Removing the holdout datasets with parameters %s" % str(self.holdout_parameters))
-        holdout_mask = holdout_mask_from_parameters(
-            y[:, 1], self.holdout_parameters, self.parameters_category_dict
-        )
+        logger.debug("Removing the holdout datasets with parameter axes %s", self.holdout_parameter_axes)
+        holdout_mask = holdout_mask_from_parameter_matrix(parameter_matrix_for_holdout, self.parameter_specs)
 
         self.X_holdout = X[holdout_mask]
         self.y_holdout = y[holdout_mask]
@@ -156,17 +197,20 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         y_model = y[~holdout_mask]
 
         logger.info("Splitting data into train, val, and test sets...")
+        stratify_model = self._build_stratify_labels(y_model)
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=self.cfg.general.seed)
         train_idx, temp_idx = next(sss.split(X_model, y_model))
 
         X_train, y_train = X_model[train_idx], y_model[train_idx]
         X_temp, y_temp = X_model[temp_idx], y_model[temp_idx]
+        stratify_temp = self._build_stratify_labels(y_temp)
 
         X_val, X_test, y_val, y_test = train_test_split(
             X_temp,
             y_temp,
             test_size=0.5,
             shuffle=True,
+            stratify=stratify_temp,
             random_state=self.cfg.general.seed,
         )
 
