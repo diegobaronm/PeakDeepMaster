@@ -35,6 +35,53 @@ def _hist(values: np.ndarray, weights: np.ndarray, n_bins: int = 50, x_min: floa
     var_hist, _ = np.histogram(values, bins=n_bins, range=(x_min, x_max), weights=weights ** 2)
     return hist, var_hist, edges
 
+def hypothesis_plot(hypothesis_shape: np.ndarray, hypothesis_var: np.ndarray, hypothesis_edges: np.ndarray, observable: str, output_dir: Path):
+    logger.debug(hypothesis_shape)
+    logger.debug(hypothesis_var)
+    logger.debug(hypothesis_edges)
+    plt.clf()
+    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    plt.title("Hypothesis normalised shape")
+    plt.xlabel("%s [GeV]" % observable)
+    plt.ylabel("Normalised events")
+    plt.legend()
+    plt.savefig(output_dir / "hypothesis_shape.pdf")
+
+def inference_scan_plot(infer_shape: np.ndarray, hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray, observable: str, param_variable: str, theta: float, output_dir: Path, postfix: int):
+    plt.clf()
+    plt.stairs(infer_shape, hypothesis_edges, label="Inference")
+    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    plt.title("Inference shape %s = %s" % (param_variable, str(theta)))
+    plt.xlabel("%s [GeV]" % observable)
+    plt.ylabel("Normalised events")
+    plt.legend()
+    plot_name = "inference_scan_%d.pdf" % postfix
+    plt.savefig(output_dir / plot_name)
+
+def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_variable: str, output_dir: Path):
+    plt.clf()
+    plt.plot(theta_scan, chi2_values)
+    plt.title(r"$\chi^2$ scan")
+    plt.xlabel(param_variable)
+    plt.ylabel(r"$\chi^2$")
+    plt.xlim((min(theta_scan),max(theta_scan)))
+    plt.yscale('log')
+    plt.ylim((min(chi2_values)/10, max(chi2_values)*10))
+    plt.savefig(output_dir / "chi2_scan.pdf")
+
+def review_plot(hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray,
+                 best_infer_shape: np.ndarray, truth_infer_shape: np.ndarray, 
+                 param_variable: str, best_theta: float, truth_theta: float,
+                 observable: str, output_dir: Path):
+    plt.clf()
+    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    plt.stairs(best_infer_shape, hypothesis_edges, label="Inference - best %s = %.4f" % (param_variable, best_theta))
+    plt.stairs(truth_infer_shape, hypothesis_edges, label="Inference - truth %s = %.4f" % (param_variable, truth_theta))
+    plt.title("Inference / Hypothesis shape comparison")
+    plt.xlabel("%s [GeV]" % observable)
+    plt.ylabel("Normalised events")
+    plt.legend()
+    plt.savefig(output_dir / "inference_review.pdf")
 
 def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     if not hasattr(cfg, "inference"):
@@ -110,15 +157,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     hypothesis_shape, hypothesis_var, hypothesis_edges = _hist(
         signal_holdout[:, observable_index], signal_holdout[:, weight_index]
     )
-    logger.debug(hypothesis_shape)
-    logger.debug(hypothesis_var)
-    logger.debug(hypothesis_edges)
-    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
-    plt.title("Hypothesis shape")
-    plt.xlabel("%s [GeV]" % observable)
-    plt.ylabel("Events")
-    plt.legend()
-    plt.savefig(output_dir / "hypothesis_shape.png")
+    hypothesis_plot(hypothesis_shape, hypothesis_var, hypothesis_edges, observable, output_dir)
 
     theta_scan = np.linspace(cfg.inference.theta_min, cfg.inference.theta_max, cfg.inference.n_points)
     chi2_values = []
@@ -161,18 +200,9 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
         rew = rosmm_sign * rew / (np.abs(rew).sum() / np.abs(hypothesis_shape).sum())
 
-
         infer_shape, infer_var, _ = _hist(X_ref_inverted, rew)
-        # Reset plot
-        plt.clf()
-        plt.stairs(infer_shape, hypothesis_edges, label="Inference shape")
-        plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
-        plt.title("Inference shape %s = %s" % (param_variable, str(theta)))
-        plt.xlabel("%s [GeV]" % observable)
-        plt.ylabel("Events")
-        plt.legend()
-        plot_name = "hypothesis_shape_%d.png" % counter
-        plt.savefig(output_dir / plot_name)
+        inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable, param_variable, theta, output_dir, counter)
+        logger.debug("Calculating chi2 for theta = %.4f", theta)
         chi2_values.append(chi_squared(hypothesis_shape, infer_shape, infer_var))
         counter+=1
 
@@ -180,33 +210,22 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     logger.info(f"Best theta: {theta_scan[best_idx]:.4f}, chi2={chi2_values[best_idx]:.4f}")
 
     logger.info("Generating chi2 plot...")
-    plt.clf()
-    plt.plot(theta_scan, chi2_values)
-    plt.xlabel(param_variable)
-    plt.ylabel("Chi2")
-    plt.xlim((min(theta_scan),max(theta_scan)))
-    plt.yscale('log')
-    plt.ylim((min(chi2_values)/10, max(chi2_values)*10))
-    plt.savefig(output_dir / "chi2_scan.png")
+    chi2_plot(theta_scan, chi2_values, param_variable, output_dir)
 
     logger.info("Generating review plot...")
-    plt.clf()
-    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    logger.debug("Best theta inference...")
     theta_scaled = datamodule.scaler.named_transformers_[parameter_transformer_name].transform([[theta_scan[best_idx]]])[0, 0]
     theta_tensor = torch.tensor([theta_scaled], dtype=torch.float32)
     rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
     rew = rosmm_sign * rew / (np.abs(rew).sum() / np.abs(hypothesis_shape).sum())
     best_infer_shape, best_infer_var, _ = _hist(X_ref_inverted, rew)
-    plt.stairs(best_infer_shape, hypothesis_edges, label="Inference shape - %s = %.4f" % (param_variable, theta_scan[best_idx]))
+    logger.debug("Truth theta inference...")
     theta_scaled = datamodule.scaler.named_transformers_[parameter_transformer_name].transform([[cfg.inference.truth_parameter]])[0, 0]
     theta_tensor = torch.tensor([theta_scaled], dtype=torch.float32)
     rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
     rew = rosmm_sign * rew / (np.abs(rew).sum() / np.abs(hypothesis_shape).sum())
     truth_infer_shape, truth_infer_var, _ = _hist(X_ref_inverted, rew)
-    plt.stairs(truth_infer_shape, hypothesis_edges, label="Inference shape - truth %s = %.4f" % (param_variable, cfg.inference.truth_parameter))
-    plt.title("Inference shape comparison")
-    plt.xlabel("%s [GeV]" % observable)
-    plt.ylabel("Events")
-    plt.legend()
-    plt.savefig(output_dir / "inference_review.png")
+    logger.debug("Plotting...")
+    review_plot(hypothesis_shape, hypothesis_edges, best_infer_shape, truth_infer_shape, param_variable, theta_scan[best_idx], cfg.inference.truth_parameter, observable, output_dir)
+    
 
