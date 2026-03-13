@@ -1,8 +1,11 @@
 import itertools
 import h5py
 import numpy as np
+import logging
 
-PARAMETER_DECIMALS = 6
+logger = logging.getLogger(__name__)
+
+PARAMETER_DECIMALS = 1
 
 def normalize_parameter_value(value: float) -> float:
     return round(float(value), PARAMETER_DECIMALS)
@@ -62,7 +65,7 @@ def build_indices_per_parameter_point(
     max_events_per_parameter: int,
     random_seed: int,
 ) -> dict[tuple[float, ...], np.ndarray]:
-    rng = np.random.default_rng(random_seed)
+    np.random.seed(random_seed)
     normalized_points = np.asarray(
         [normalize_parameter_point(point) for point in np.asarray(parameter_matrix, dtype=float)],
         dtype=float,
@@ -71,9 +74,9 @@ def build_indices_per_parameter_point(
     out = {}
     for point in parameter_points:
         point_array = np.asarray(point, dtype=float)
-        indices = np.argwhere(np.all(np.isclose(normalized_points, point_array, atol=1e-6), axis=1)).flatten()
+        indices = np.argwhere(np.all(np.isclose(normalized_points, point_array, atol=1e-3), axis=1)).flatten()
         if len(indices) > max_events_per_parameter:
-            indices = rng.choice(indices, max_events_per_parameter, replace=False)
+            indices = np.random.choice(indices, max_events_per_parameter, replace=False)
         out[point] = indices
     return out
 
@@ -114,6 +117,7 @@ def structure_data(
 
     parameter_matrix = np.concatenate(parameter_columns, axis=1)
     parameter_point_to_category = {point: i for i, point in enumerate(parameter_points)}
+    logger.debug("Parameter point to category mapping: %s", parameter_point_to_category)
     y_category = np.asarray(
         [parameter_point_to_category[normalize_parameter_point(point)] for point in parameter_matrix],
         dtype=int,
@@ -133,22 +137,28 @@ def augment_data_for_background(
     augmented_X = []
     augmented_y = []
 
+    logger.debug("Augmenting data with training parameter grid: %s", training_parameter_grid)
+
     for idx in background_indices:
+        # This is the default parameter point for BG -> Usually all zeros.
         current_point = normalize_parameter_point(X[idx, parameter_column_indices])
         for parameter_point in training_parameter_grid:
+            # We want to replace the default parameter point with the first training parameter point.
             if parameter_point == current_point:
-                continue
-
-            new_x = X[idx].copy()
-            new_x[parameter_column_indices] = np.asarray(parameter_point, dtype=float)
-            augmented_X.append(new_x)
-            augmented_y.append(y[idx])
+                X[idx, parameter_column_indices] = np.asarray(parameter_point, dtype=float)
+            else: # For all the others we create a new data point with the same features but the new parameter point.
+                new_x = X[idx].copy()
+                new_x[parameter_column_indices] = np.asarray(parameter_point, dtype=float)
+                augmented_X.append(new_x)
+                augmented_y.append(y[idx])
 
     if len(augmented_X) == 0:
         return X, y
 
     X_ag = np.concatenate([X, np.asarray(augmented_X)], axis=0)
     y_ag = np.concatenate([y, np.asarray(augmented_y)], axis=0)
+    logger.debug("Augmented data shape: X=%s, y=%s", X_ag.shape, y_ag.shape)
+
     return X_ag, y_ag
 
 

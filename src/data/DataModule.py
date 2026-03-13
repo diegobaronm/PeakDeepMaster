@@ -65,6 +65,10 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         self.training_parameter_grid = build_parameter_grid(self.parameter_specs, "values_for_training")
         if len(self.training_parameter_grid) == 0:
             raise ValueError("values_for_training must be provided in dataset.parameters")
+        logger.debug("Parameter axes: %s", self.parameter_axes)
+        logger.debug("Holdout parameter axes: %s", self.holdout_parameter_axes)
+        logger.debug("Training parameter grid: %s", self.training_parameter_grid)
+
 
         self.random_seed = int(getattr(cfg.dataset, "random_seed", cfg.general.seed))
 
@@ -121,7 +125,8 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                 random_seed=self.random_seed,
             )
             training_indices = np.concatenate(list(indices_per_parameter.values()))
-
+            logger.debug("Number of parameter indices: %d", len(indices_per_parameter))
+            
             logger.debug("Structuring the data..")
             X, y, self.parameter_point_to_category, self.feature_index_map = structure_data(
                 data_file=data_file,
@@ -136,7 +141,8 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             self.category_to_parameter_point = {
                 category: point for point, category in self.parameter_point_to_category.items()
             }
-            logger.debug("Data[0] example: %s", X[1])
+            logger.debug("Data[0] example: %s", X[0])
+            logger.debug("Data[1000000] example: %s", X[1000000])
 
         weight_group, weight_variable = parse_feature_spec(self.weight_spec)
         parameter_feature_keys = []
@@ -150,7 +156,8 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         logger.debug("Normalizing weights...")
         X[:, weight_column_index] = norm_weights_per_category_and_sign(X[:, weight_column_index], y[:, -1])
-        logger.debug("Data[0] example: %s", X[1])
+        logger.debug("Data[0] example: %s", X[0])
+        logger.debug("Data[1000000] example: %s", X[1000000])
 
         logger.debug("Augmenting data for background...")
         X, y = augment_data_for_background(
@@ -159,7 +166,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             self.training_parameter_grid,
             parameter_column_indices=parameter_column_indices,
         )
-        logger.debug("Data[0] example: %s", X[1])
+        logger.debug("Data[0] example: %s", X[0])
+        logger.debug("Data[1000000] example: %s", X[1000000])
+        logger.debug("Data[5000000] example: %s", X[5000000])
 
         parameter_matrix_for_holdout = X[:, parameter_column_indices].copy()
 
@@ -172,7 +181,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         logger.debug("Fitting and transforming features...")
         X = self.scaler.fit_transform(X)
-        logger.debug("Data[0] example: %s", X[1])
+        logger.debug("Data[0] example: %s", X[0])
+        logger.debug("Data[1000000] example: %s", X[1000000])
+        logger.debug("Data[5000000] example: %s", X[5000000])
 
         self.parameter_column_indices = [self.transformed_feature_keys.index(key) for key in parameter_feature_keys]
         self.parameter_column_index = self.parameter_column_indices[0]
@@ -186,15 +197,22 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             self.observable_column_indices.append(self.transformed_feature_keys.index(key))
 
         self.x_column_indices = list(self.observable_column_indices)
+        logger.debug("Observable column indices: %s", self.observable_column_indices)
+        logger.debug("Parameter column indices: %s", self.parameter_column_indices)
+        logger.debug("Weight column index: %d", self.weight_column_index)
 
         logger.debug("Removing the holdout datasets with parameter axes %s", self.holdout_parameter_axes)
         holdout_mask = holdout_mask_from_parameter_matrix(parameter_matrix_for_holdout, self.parameter_specs)
+        logger.debug("Holdout mask length: %d, holdout count: %d", len(holdout_mask), np.sum(holdout_mask))
 
         self.X_holdout = X[holdout_mask]
         self.y_holdout = y[holdout_mask]
 
         X_model = X[~holdout_mask]
         y_model = y[~holdout_mask]
+        logger.debug("Data_wo_holdout[0] example: %s", X_model[0])
+        logger.debug("Data_wo_holdout[1000000] example: %s", X_model[1000000])
+        logger.debug("Data_wo_holdout[5000000] example: %s", X_model[5000000])
 
         logger.info("Splitting data into train, val, and test sets...")
         stratify_model = self._build_stratify_labels(y_model)
@@ -204,6 +222,10 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         X_train, y_train = X_model[train_idx], y_model[train_idx]
         X_temp, y_temp = X_model[temp_idx], y_model[temp_idx]
         stratify_temp = self._build_stratify_labels(y_temp)
+
+        logger.debug("X_train[0] example: %s", X_train[0])
+        logger.debug("X_train[1000000] example: %s", X_train[1000000])
+        logger.debug("X_train[5000000] example: %s", X_train[5000000])
 
         X_val, X_test, y_val, y_test = train_test_split(
             X_temp,
