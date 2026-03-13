@@ -4,7 +4,7 @@ general:
   seed: 42
 
 logging:
-  level: INFO
+  level: DEBUG
   format: '%(asctime)s | %(levelname)s | %(name)s | %(message)s'
   datefmt: '%Y-%m-%d %H:%M:%S'
   colors: auto
@@ -12,7 +12,7 @@ logging:
   capture_warnings: true
   train:
     output_dir: lightning_logs
-    experiment_name: 2D_PP
+    experiment_name: 2D_PN
 
 
 dataset:
@@ -41,11 +41,11 @@ dataset:
   weights:
     - EVENT_GLOBAL: lumiWeight
   train:
-    num_workers: 10
-    batch_size: 10240
+    num_workers: 12
+    batch_size: 20480
   val:
-    num_workers: 10
-    batch_size: 10240
+    num_workers: 12
+    batch_size: 20480
 
 
 model:
@@ -53,12 +53,12 @@ model:
   dropout: 0.05
 
 train:
-  n_epochs: 150
-  learning_rate: 0.0002
+  n_epochs: 300
+  learning_rate: 0.0004
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: positive
+  signal_weight_sign: negative
   background_weight_sign: positive
   compile: false
 
@@ -69,7 +69,7 @@ predict:
 performance:
   checkpoint_path: lightning_logs/2D_PP/version_0/checkpoints/
   output_dir: results/performance/2D_PP/
-  batch_size: 10240
+  batch_size: 20480
 
 inference:
   output_dir: results/inference/coupling_1p1_hmass_870
