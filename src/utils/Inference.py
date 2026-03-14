@@ -1,6 +1,7 @@
 from pathlib import Path
 import itertools
 import logging
+from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,9 +34,12 @@ def chi_squared(observed: np.ndarray, expected: np.ndarray, expected_variance: n
     return float(np.sum(((observed - expected) ** 2) / expected_variance))
 
 
-def _hist(values: np.ndarray, weights: np.ndarray, n_bins: int = 50, x_min: float = 500.0, x_max: float = 1200.0):
+def _hist(values: np.ndarray, weights: np.ndarray, n_bins: int = 50, x_min: float = 500.0, x_max: float = 1200.0, normalise: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     hist, edges = np.histogram(values, bins=n_bins, range=(x_min, x_max), weights=weights)
     var_hist, _ = np.histogram(values, bins=n_bins, range=(x_min, x_max), weights=weights ** 2)
+    if normalise:
+        hist = hist / np.sum(np.abs(hist))
+        var_hist = var_hist / np.sum(var_hist)
     return hist, var_hist, edges
 
 
@@ -92,6 +96,7 @@ def chi2_heatmap_plot(
         origin="lower",
         aspect="auto",
         extent=[theta_axes[0][0], theta_axes[0][-1], theta_axes[1][0], theta_axes[1][-1]],
+        norm="log",
     )
     plt.colorbar(label=r"$\chi^2$")
     plt.xlabel(parameter_names[0])
@@ -256,7 +261,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
 
     logger.info("Generating hypotheis plot...")
     hypothesis_shape, hypothesis_var, hypothesis_edges = _hist(
-        signal_holdout[:, observable_index], signal_holdout[:, weight_index]
+        signal_holdout[:, observable_index], signal_holdout[:, weight_index], normalise=True
     )
     hypothesis_plot(hypothesis_shape, hypothesis_var, hypothesis_edges, observable, output_dir)
 
@@ -296,7 +301,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         logger.error("Only +/- 1.0 values can be passed as RoSMM sign.")
         raise ValueError(f"{rosmm_sign} is not a valid value for RoSMM sign.")
     scan_rows = []
-    for theta_point in theta_scan:
+    for theta_point in tqdm(theta_scan, desc="Inference scan", unit="scan point"):
         infer_shape, infer_var, _ = _infer_shape_for_point(
             theta_point=theta_point,
             datamodule=datamodule,
