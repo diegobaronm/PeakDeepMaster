@@ -172,8 +172,8 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             parameter_column_indices.append(self.feature_index_map[key])
         weight_column_index = self.feature_index_map[feature_key(weight_group, weight_variable)]
 
-        if stage == "training":
-            logger.debug("Normalizing weights...")
+        if self.cfg.general.mode == "train":
+            logger.info("Normalizing weights...")
             X[:, weight_column_index] = norm_weights_per_category_and_sign(X[:, weight_column_index], y[:, -1])
         for event_idx in self.cfg.logging.events_to_log_in_debug:
                 if event_idx < len(X):

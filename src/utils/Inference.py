@@ -120,6 +120,12 @@ def chi2_heatmap_plot(
     plt.xlabel(parameter_names[0])
     plt.ylabel(parameter_names[1])
     plt.title(r"$\chi^2$ heatmap")
+    # Add a point for the minimum chi2
+    min_idx = np.unravel_index(np.argmin(grid), grid.shape)
+    plt.scatter(theta_axes[0][min_idx[0]], theta_axes[1][min_idx[1]], color="red", marker="x", label="Best fit parameters")
+    plt.legend()
+
+
     plt.savefig(output_dir / "chi2_scan_heatmap.pdf")
 
 
@@ -257,9 +263,10 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     bg_mask = y_test[:, 0] == 0
     logger.debug("Number of reference events in test split: %d", bg_mask.sum())
     # Select only one set of background events from the augmented dataset:
-    one_of_the_training_parameters = X_test[:, datamodule.parameter_column_indices][0]
+    X_test_bg = X_test[bg_mask]
+    one_of_the_training_parameters = X_test_bg[0, datamodule.parameter_column_indices]
     bg_param_mask = X_test[:, datamodule.parameter_column_indices] == one_of_the_training_parameters
-    bg_param_mask = bg_param_mask.reshape(-1)
+    bg_param_mask = np.all(bg_param_mask, axis=1)
     logger.debug("Number of reference events matching training parameter point: %d", bg_param_mask.sum())
     X_ref = X_test[bg_mask & bg_param_mask]
     logger.info("Selected %d background events from test split for reference sample.", len(X_ref))
