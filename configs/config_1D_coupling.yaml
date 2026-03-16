@@ -12,13 +12,13 @@ logging:
   capture_warnings: true
   events_to_log_in_debug: [0, 1000, 200000]
   train:
-    output_dir: lightning_logs
-    experiment_name: 1D_coupling_PP
+    output_dir: training_logs
+    experiment_name: 1D_coupling_PN
 
 
 dataset:
   input_h5_path: data/Coupling_Inference_negW.h5
-  max_events_per_parameter: 700000
+  max_events_per_parameter: 830000
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
@@ -55,7 +55,7 @@ train:
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: positive
+  signal_weight_sign: negative
   background_weight_sign: positive
   compile: false
 
@@ -64,17 +64,19 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: lightning_logs/1D_coupling_PP/version_0/checkpoints/
-  output_dir: results/performance/1D_coupling_PP/
+  checkpoint_path: training_logs/1D_coupling_PN/version_0/checkpoints/
+  output_dir: results/performance/1D_coupling_PN/
   batch_size: 10240
 
 inference:
-  output_dir: results/inference/coupling_0p5
-  model_pp_checkpoint: lightning_logs/1D_coupling_PP/version_0/checkpoints/
-  model_pn_checkpoint: lightning_logs/1D_coupling_PN/version_0/checkpoints/
+  output_dir: results/inference/coupling_1p1
+  model_pp_checkpoint: training_logs/1D_coupling_PP/version_0/checkpoints/
+  model_pn_checkpoint: training_logs/1D_coupling_PN/version_0/checkpoints/
   observable: mttbar
   rosmm_sign: -1.0
-  truth_parameter: 0.5
+  truth_parameter: 1.1
   theta_min: 0.1
   theta_max: 2.1
   n_points: 100
+  n_pseudo_experiments: 1000
+  pseudo_experiment_confidence: 0.95

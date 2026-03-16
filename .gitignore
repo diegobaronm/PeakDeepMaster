@@ -11,3 +11,5 @@ results/*
 outputs/*
 data/*
 !data/.gitkeep
+refined*/
+training_logs/*

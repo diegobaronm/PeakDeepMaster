@@ -10,6 +10,7 @@ import torch
 from omegaconf import DictConfig
 
 from src.data.DataHelpers import feature_key, parameter_point_label, parse_feature_spec
+from src.utils.PseudoExperiments import PseudoExperimentEstimator
 from src.utils.utils import get_latest_checkpoint_path, load_checkpoint_into_model, resolve_runtime_path
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,8 @@ def rosmm(theta: torch.Tensor, x_obs: torch.Tensor, model_pp, model_pn, c_zero: 
 
 
 def chi_squared(observed: np.ndarray, expected: np.ndarray, expected_sigma: np.ndarray, observed_sigma: np.ndarray) -> float:
-    variance = (expected_sigma ** 2) + (observed_sigma ** 2) + 1e-8
+    # variance = (expected_sigma ** 2) + (observed_sigma ** 2) + 1e-8
+    variance = 1
     return float(np.sum(((observed - expected) ** 2 / variance)))
 
 import boost_histogram as bh
@@ -59,7 +61,7 @@ def hypothesis_plot(hypothesis_shape: np.ndarray, hypothesis_sigma: np.ndarray, 
     bin_centers = 0.5 * (hypothesis_edges[:-1] + hypothesis_edges[1:])
     # Draw a histogram and the error bars
     plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
-    plt.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label="Hypothesis",fmt='none',ecolor="black",capsize=2)
+    plt.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label="Stat. Uncertainty",fmt='none',ecolor="black",capsize=2)
     plt.title("Hypothesis normalised shape")
     plt.xlabel("%s [GeV]" % observable)
     plt.ylabel("Normalised events")
@@ -79,20 +81,20 @@ def inference_scan_plot(infer_shape: np.ndarray, hypothesis_shape: np.ndarray, h
     plt.savefig(output_dir / plot_name)
 
 
-def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_variable: str, output_dir: Path):
+def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_variable: str, truth_point: tuple[float, ...], output_dir: Path):
     plt.clf()
     plt.plot(theta_scan, chi2_values)
-    plt.title(r"$\chi^2$ scan")
+    plt.title(r"$L^2$ scan")
     plt.xlabel(param_variable)
-    plt.ylabel(r"$\chi^2$")
+    plt.ylabel(r"$L^2$")
     plt.xlim((min(theta_scan),max(theta_scan)))
     plt.yscale('log')
     plt.ylim((min(chi2_values)/1.2, max(chi2_values)*10))
-    # Draw a line at chi2_min + 1 for 1-sigma confidence interval (for 1 parameter)
-    chi2_min = min(chi2_values)
-    plt.axhline(chi2_min + 1, color='red', linestyle='--', label=r"$\chi^2_{min} + 1$")
-    # Draw a line at chi2_min + 3.84 for 95% confidence interval (for 1 parameter)
-    plt.axhline(chi2_min + 3.84, color='green', linestyle='--', label=r"$\chi^2_{min} + 3.84$")
+    # Draw a point at the minimum chi2
+    min_idx = int(np.argmin(chi2_values))
+    plt.scatter(theta_scan[min_idx], chi2_values[min_idx], color="red", marker="x", label="Best fit parameter")
+    # Draw a point at the truth parameter
+    plt.scatter(truth_point[0], chi2_values[min_idx], color="green", marker="o", label="Truth parameter", alpha=0.5)
     plt.legend()
 
     plt.savefig(output_dir / "chi2_scan.pdf")
@@ -102,6 +104,7 @@ def chi2_heatmap_plot(
     theta_axes: list[np.ndarray],
     chi2_values: np.ndarray,
     parameter_names: list[str],
+    truth_point: tuple[float, ...],
     output_dir: Path,
 ):
     if len(theta_axes) != 2:
@@ -123,18 +126,21 @@ def chi2_heatmap_plot(
     # Add a point for the minimum chi2
     min_idx = np.unravel_index(np.argmin(grid), grid.shape)
     plt.scatter(theta_axes[0][min_idx[0]], theta_axes[1][min_idx[1]], color="red", marker="x", label="Best fit parameters")
+    # Add a point for the truth parameters
+    plt.scatter(truth_point[0], truth_point[1], color="green", marker="o", label="Truth parameters")
     plt.legend()
-
 
     plt.savefig(output_dir / "chi2_scan_heatmap.pdf")
 
 
-def review_plot(hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray,
+def review_plot(hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray, hypothesis_sigma: np.ndarray,
                  best_infer_shape: np.ndarray, truth_infer_shape: np.ndarray, 
                  best_label: str, truth_label: str,
                  observable: str, output_dir: Path):
     plt.clf()
     plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    bin_centers = 0.5 * (hypothesis_edges[:-1] + hypothesis_edges[1:])
+    plt.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label=None,fmt='none',ecolor="black",capsize=2)
     plt.stairs(best_infer_shape, hypothesis_edges, label=f"Inference - best {best_label}")
     plt.stairs(truth_infer_shape, hypothesis_edges, label=f"Inference - truth {truth_label}")
     plt.title("Inference / Hypothesis shape comparison")
@@ -332,6 +338,18 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     x_ref_tensor = torch.tensor(X_ref[:, x_indices], dtype=torch.float32)
     weight_ref = X_ref[:, weight_index]
 
+    n_pseudo = int(getattr(cfg.inference, "n_pseudo_experiments", 0))
+    pe_estimator = None
+    if n_pseudo > 0:
+        pe_confidence = float(getattr(cfg.inference, "pseudo_experiment_confidence", 0.95))
+        pe_estimator = PseudoExperimentEstimator(
+            hypothesis_shape=hypothesis_shape,
+            hypothesis_sigma=hypothesis_sigma,
+            n_pseudo=n_pseudo,
+            random_seed=cfg.general.seed,
+        )
+        pe_estimator.generate()
+
     logger.info("Running inference scan...")
     counter = 1
     rosmm_sign = cfg.inference.rosmm_sign
@@ -356,6 +374,8 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         theta_label = parameter_point_label(datamodule.parameter_names, theta_point)
         if len(datamodule.parameter_names) == 1:
             inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable, theta_label, output_dir, counter)
+        if pe_estimator is not None:
+            pe_estimator.add_scan_point(theta_point, infer_shape, infer_sigma)
         chi2_value = chi_squared(hypothesis_shape, infer_shape, infer_sigma, hypothesis_sigma)
         chi2_values.append(chi2_value)
         scan_row = {name: value for name, value in zip(datamodule.parameter_names, theta_point)}
@@ -372,10 +392,22 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
 
     if len(datamodule.parameter_names) == 1:
         logger.info("Generating chi2 plot...")
-        chi2_plot(theta_axes[0], chi2_values_array, datamodule.parameter_names[0], output_dir)
+        chi2_plot(theta_axes[0], chi2_values_array, datamodule.parameter_names[0], truth_point, output_dir)
     elif len(datamodule.parameter_names) == 2:
         logger.info("Generating chi2 heatmap...")
-        chi2_heatmap_plot(theta_axes, chi2_values_array, datamodule.parameter_names, output_dir)
+        chi2_heatmap_plot(theta_axes, chi2_values_array, datamodule.parameter_names, truth_point, output_dir)
+
+    if pe_estimator is not None:
+        logger.info("Running pseudo-experiment uncertainty estimation...")
+        pe_estimator.find_best_fits()
+        pe_estimator.save(output_dir, datamodule.parameter_names)
+        pe_estimator.plot(
+            parameter_names=datamodule.parameter_names,
+            truth_point=truth_point,
+            nominal_best_fit=best_theta,
+            output_dir=output_dir,
+            confidence=pe_confidence,
+        )
 
     logger.info("Generating review plot...")
     logger.debug("Best parameter point inference...")
@@ -410,6 +442,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     review_plot(
         hypothesis_shape,
         hypothesis_edges,
+        hypothesis_sigma,
         best_infer_shape,
         truth_infer_shape,
         parameter_point_label(datamodule.parameter_names, best_theta),

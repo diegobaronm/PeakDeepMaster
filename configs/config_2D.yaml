@@ -10,14 +10,15 @@ logging:
   colors: auto
   file: null
   capture_warnings: true
+  events_to_log_in_debug: [0, 1000, 200000]
   train:
-    output_dir: lightning_logs
-    experiment_name: 2D_PN
+    output_dir: training_logs
+    experiment_name: 2D_PP
 
 
 dataset:
   input_h5_path: data/2D_Inference_negW.h5
-  max_events_per_parameter: 700000
+  max_events_per_parameter: 854000
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
@@ -67,25 +68,27 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: lightning_logs/2D_PN/version_1/checkpoints/
+  checkpoint_path: training_logs/2D_PN/version_0/checkpoints/
   output_dir: results/performance/2D_PN/
   batch_size: 20480
 
 inference:
-  output_dir: results/inference/coupling_1p1_hmass_650
-  model_pp_checkpoint: lightning_logs/2D_PP/version_1/checkpoints/
-  model_pn_checkpoint: lightning_logs/2D_PN/version_1/checkpoints/
+  output_dir: results/inference/coupling_0p5_hmass_870
+  model_pp_checkpoint: training_logs/2D_PP/version_0/checkpoints/
+  model_pn_checkpoint: training_logs/2D_PN/version_0/checkpoints/
   observable: mttbar
-  rosmm_sign: 1.0
+  rosmm_sign: -1.0
   truth_parameters:
-    coupling: 1.1
-    hmass: 650.0
+    coupling: 0.5
+    hmass: 870.0
   scan_parameters:
     - name: coupling
       min: 0.1
       max: 2.1
-      n_points: 60
+      n_points: 50
     - name: hmass
       min: 550.0
       max: 1150.0
-      n_points: 60
+      n_points: 50
+  n_pseudo_experiments: 1000
+  pseudo_experiment_confidence: 0.95
