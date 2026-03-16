@@ -10,6 +10,7 @@ logging:
   colors: auto
   file: null
   capture_warnings: true
+  events_to_log_in_debug: [0, 1000, 200000]
   train:
     output_dir: lightning_logs
     experiment_name: 1D_mass_PP

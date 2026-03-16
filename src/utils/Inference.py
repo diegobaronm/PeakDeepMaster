@@ -30,25 +30,36 @@ def rosmm(theta: torch.Tensor, x_obs: torch.Tensor, model_pp, model_pn, c_zero: 
     return llr_pp * (c_one / c_zero) + llr_pn * ((1 - c_one) / c_zero)
 
 
-def chi_squared(observed: np.ndarray, expected: np.ndarray, expected_variance: np.ndarray) -> float:
-    return float(np.sum(((observed - expected) ** 2) / expected_variance))
+def chi_squared(observed: np.ndarray, expected: np.ndarray, expected_sigma: np.ndarray, observed_sigma: np.ndarray) -> float:
+    variance = (expected_sigma ** 2) + (observed_sigma ** 2) + 1e-8
+    return float(np.sum(((observed - expected) ** 2 / variance)))
 
+import boost_histogram as bh
 
-def _hist(values: np.ndarray, weights: np.ndarray, n_bins: int = 50, x_min: float = 500.0, x_max: float = 1200.0, normalise: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    hist, edges = np.histogram(values, bins=n_bins, range=(x_min, x_max), weights=weights)
-    var_hist, _ = np.histogram(values, bins=n_bins, range=(x_min, x_max), weights=weights ** 2)
+def _hist(values: np.ndarray, weights: np.ndarray, n_bins: int = 70, x_min: float = 500.0, x_max: float = 1200.0, normalise: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    hist = bh.Histogram( bh.axis.Regular(n_bins, x_min, x_max), storage=bh.storage.Weight())
+    hist.fill(values, weight=weights)
+    hist_values = hist.values()
+    hist_edges = hist.axes[0].edges
+    var_hist = hist.variances()
+
+    sigma_hist = np.sqrt(var_hist)
     if normalise:
-        hist = hist / np.sum(np.abs(hist))
-        var_hist = var_hist / np.sum(var_hist)
-    return hist, var_hist, edges
+        normalisation_factor = np.sum(np.abs(hist_values))
+        hist_values = hist_values / normalisation_factor
+        sigma_hist = sigma_hist / normalisation_factor
+    return hist_values, sigma_hist, hist_edges
 
 
-def hypothesis_plot(hypothesis_shape: np.ndarray, hypothesis_var: np.ndarray, hypothesis_edges: np.ndarray, observable: str, output_dir: Path):
+def hypothesis_plot(hypothesis_shape: np.ndarray, hypothesis_sigma: np.ndarray, hypothesis_edges: np.ndarray, observable: str, output_dir: Path):
     logger.debug(hypothesis_shape)
-    logger.debug(hypothesis_var)
+    logger.debug(hypothesis_sigma)
     logger.debug(hypothesis_edges)
     plt.clf()
+    bin_centers = 0.5 * (hypothesis_edges[:-1] + hypothesis_edges[1:])
+    # Draw a histogram and the error bars
     plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    plt.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label="Hypothesis",fmt='none',ecolor="black",capsize=2)
     plt.title("Hypothesis normalised shape")
     plt.xlabel("%s [GeV]" % observable)
     plt.ylabel("Normalised events")
@@ -76,7 +87,14 @@ def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_variable: s
     plt.ylabel(r"$\chi^2$")
     plt.xlim((min(theta_scan),max(theta_scan)))
     plt.yscale('log')
-    plt.ylim((min(chi2_values)/10, max(chi2_values)*10))
+    plt.ylim((min(chi2_values)/1.2, max(chi2_values)*10))
+    # Draw a line at chi2_min + 1 for 1-sigma confidence interval (for 1 parameter)
+    chi2_min = min(chi2_values)
+    plt.axhline(chi2_min + 1, color='red', linestyle='--', label=r"$\chi^2_{min} + 1$")
+    # Draw a line at chi2_min + 3.84 for 95% confidence interval (for 1 parameter)
+    plt.axhline(chi2_min + 3.84, color='green', linestyle='--', label=r"$\chi^2_{min} + 3.84$")
+    plt.legend()
+
     plt.savefig(output_dir / "chi2_scan.pdf")
 
 
@@ -172,6 +190,7 @@ def _infer_shape_for_point(
     theta_point: tuple[float, ...],
     datamodule,
     x_ref_tensor: torch.Tensor,
+    weight_ref: np.ndarray,
     x_ref_inverted: np.ndarray,
     model_pp,
     model_pn,
@@ -183,8 +202,8 @@ def _infer_shape_for_point(
     theta_scaled = _scale_theta_point(theta_point, datamodule)
     theta_tensor = torch.tensor(theta_scaled, dtype=torch.float32)
     rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
-    rew = rosmm_sign * rew / (np.abs(rew).sum() / np.abs(hypothesis_shape).sum())
-    return _hist(x_ref_inverted, rew)
+    rew = rosmm_sign * rew * weight_ref
+    return _hist(x_ref_inverted, rew, normalise=True)
 
 def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     if not hasattr(cfg, "inference"):
@@ -236,7 +255,15 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     y_test = datamodule.test_dataset.tensors[1].cpu().numpy()
 
     bg_mask = y_test[:, 0] == 0
-    X_ref = X_test[bg_mask]
+    logger.debug("Number of reference events in test split: %d", bg_mask.sum())
+    # Select only one set of background events from the augmented dataset:
+    one_of_the_training_parameters = X_test[:, datamodule.parameter_column_indices][0]
+    bg_param_mask = X_test[:, datamodule.parameter_column_indices] == one_of_the_training_parameters
+    bg_param_mask = bg_param_mask.reshape(-1)
+    logger.debug("Number of reference events matching training parameter point: %d", bg_param_mask.sum())
+    X_ref = X_test[bg_mask & bg_param_mask]
+    logger.info("Selected %d background events from test split for reference sample.", len(X_ref))
+
     if len(X_ref) == 0:
         raise RuntimeError("No background events available in the test split for inference.")
     X_ref_inverted = inverse_observable_transform(X_ref[:, observable_index].reshape(-1, 1)).flatten()
@@ -257,13 +284,16 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     logger.info("Reversing transformation...")
     signal_holdout = signal_holdout.copy()
     signal_holdout[:, observable_index] = inverse_observable_transform(signal_holdout[:, observable_index].reshape(-1, 1)).flatten()
-
+    logger.info("Holdout signal events for truth point %s: %d", truth_point, len(signal_holdout))
 
     logger.info("Generating hypotheis plot...")
-    hypothesis_shape, hypothesis_var, hypothesis_edges = _hist(
+    hypothesis_shape, hypothesis_sigma, hypothesis_edges = _hist(
         signal_holdout[:, observable_index], signal_holdout[:, weight_index], normalise=True
     )
-    hypothesis_plot(hypothesis_shape, hypothesis_var, hypothesis_edges, observable, output_dir)
+    logger.debug("Hyp bin contents: %s", hypothesis_shape)
+    logger.debug("Hyp bin uncertainties: %s", hypothesis_sigma)
+    logger.debug("Hyp weights %s ", signal_holdout[:, weight_index])
+    hypothesis_plot(hypothesis_shape, hypothesis_sigma, hypothesis_edges, observable, output_dir)
 
     theta_axes = _build_scan_axes(cfg, datamodule)
     theta_scan = [tuple(float(value) for value in point) for point in itertools.product(*theta_axes)]
@@ -293,6 +323,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     logger.info(f"Estimated C1: {c_one:.4f}")
 
     x_ref_tensor = torch.tensor(X_ref[:, x_indices], dtype=torch.float32)
+    weight_ref = X_ref[:, weight_index]
 
     logger.info("Running inference scan...")
     counter = 1
@@ -302,10 +333,11 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         raise ValueError(f"{rosmm_sign} is not a valid value for RoSMM sign.")
     scan_rows = []
     for theta_point in tqdm(theta_scan, desc="Inference scan", unit="scan point"):
-        infer_shape, infer_var, _ = _infer_shape_for_point(
+        infer_shape, infer_sigma, _ = _infer_shape_for_point(
             theta_point=theta_point,
             datamodule=datamodule,
             x_ref_tensor=x_ref_tensor,
+            weight_ref=weight_ref,
             x_ref_inverted=X_ref_inverted,
             model_pp=model_pp,
             model_pn=model_pn,
@@ -317,7 +349,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         theta_label = parameter_point_label(datamodule.parameter_names, theta_point)
         if len(datamodule.parameter_names) == 1:
             inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable, theta_label, output_dir, counter)
-        chi2_value = chi_squared(hypothesis_shape, infer_shape, infer_var)
+        chi2_value = chi_squared(hypothesis_shape, infer_shape, infer_sigma, hypothesis_sigma)
         chi2_values.append(chi2_value)
         scan_row = {name: value for name, value in zip(datamodule.parameter_names, theta_point)}
         scan_row["chi2"] = chi2_value
@@ -344,6 +376,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         theta_point=best_theta,
         datamodule=datamodule,
         x_ref_tensor=x_ref_tensor,
+        weight_ref=weight_ref,
         x_ref_inverted=X_ref_inverted,
         model_pp=model_pp,
         model_pn=model_pn,
@@ -357,6 +390,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         theta_point=truth_point,
         datamodule=datamodule,
         x_ref_tensor=x_ref_tensor,
+        weight_ref=weight_ref,
         x_ref_inverted=X_ref_inverted,
         model_pp=model_pp,
         model_pn=model_pn,
@@ -376,5 +410,3 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         observable,
         output_dir,
     )
-    
-

@@ -141,8 +141,26 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             self.category_to_parameter_point = {
                 category: point for point, category in self.parameter_point_to_category.items()
             }
-            logger.debug("Data[0] example: %s", X[0])
-            logger.debug("Data[1000000] example: %s", X[1000000])
+            for event_idx in self.cfg.logging.events_to_log_in_debug:
+                if event_idx < len(X):
+                    logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
+            # Log the number of signal and background events after structuring, and per-parameter as well.
+            logger.info("Total structured events: %d", len(X))
+            logger.info("  Signal events: %d", np.sum(y[:, 0] == 1))
+            logger.info("  Background events: %d", np.sum(y[:, 0] == 0))
+            for point, category in self.parameter_point_to_category.items():
+                point_mask = y[:, 1] == category
+                n_point_events = np.sum(point_mask)
+                n_point_signal = np.sum((y[:, 0] == 1) & point_mask)
+                n_point_background = np.sum((y[:, 0] == 0) & point_mask)
+                logger.info(
+                    "Parameter point %s (category %d): total=%d, signal=%d, background=%d",
+                    point,
+                    category,
+                    n_point_events,
+                    n_point_signal,
+                    n_point_background,
+                )
 
         weight_group, weight_variable = parse_feature_spec(self.weight_spec)
         parameter_feature_keys = []
@@ -154,10 +172,12 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             parameter_column_indices.append(self.feature_index_map[key])
         weight_column_index = self.feature_index_map[feature_key(weight_group, weight_variable)]
 
-        logger.debug("Normalizing weights...")
-        X[:, weight_column_index] = norm_weights_per_category_and_sign(X[:, weight_column_index], y[:, -1])
-        logger.debug("Data[0] example: %s", X[0])
-        logger.debug("Data[1000000] example: %s", X[1000000])
+        if stage == "training":
+            logger.debug("Normalizing weights...")
+            X[:, weight_column_index] = norm_weights_per_category_and_sign(X[:, weight_column_index], y[:, -1])
+        for event_idx in self.cfg.logging.events_to_log_in_debug:
+                if event_idx < len(X):
+                    logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
 
         logger.debug("Augmenting data for background...")
         X, y = augment_data_for_background(
@@ -166,9 +186,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             self.training_parameter_grid,
             parameter_column_indices=parameter_column_indices,
         )
-        logger.debug("Data[0] example: %s", X[0])
-        logger.debug("Data[1000000] example: %s", X[1000000])
-        logger.debug("Data[5000000] example: %s", X[5000000])
+        for event_idx in self.cfg.logging.events_to_log_in_debug:
+                if event_idx < len(X):
+                    logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
 
         parameter_matrix_for_holdout = X[:, parameter_column_indices].copy()
 
@@ -181,9 +201,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         logger.debug("Fitting and transforming features...")
         X = self.scaler.fit_transform(X)
-        logger.debug("Data[0] example: %s", X[0])
-        logger.debug("Data[1000000] example: %s", X[1000000])
-        logger.debug("Data[5000000] example: %s", X[5000000])
+        for event_idx in self.cfg.logging.events_to_log_in_debug:
+                if event_idx < len(X):
+                    logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
 
         self.parameter_column_indices = [self.transformed_feature_keys.index(key) for key in parameter_feature_keys]
         self.parameter_column_index = self.parameter_column_indices[0]
@@ -210,9 +230,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         X_model = X[~holdout_mask]
         y_model = y[~holdout_mask]
-        logger.debug("Data_wo_holdout[0] example: %s", X_model[0])
-        logger.debug("Data_wo_holdout[1000000] example: %s", X_model[1000000])
-        logger.debug("Data_wo_holdout[5000000] example: %s", X_model[5000000])
+        for event_idx in self.cfg.logging.events_to_log_in_debug:
+                if event_idx < len(X_model):
+                    logger.debug("Data_wo_holdout[%d] example: %s", event_idx, X_model[event_idx])
 
         logger.info("Splitting data into train, val, and test sets...")
         stratify_model = y_model[:, 1] # self._build_stratify_labels(y_model)
@@ -223,9 +243,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         X_temp, y_temp = X_model[temp_idx], y_model[temp_idx]
         stratify_temp = self._build_stratify_labels(y_temp)
 
-        logger.debug("X_train[0] example: %s", X_train[0])
-        logger.debug("X_train[1000000] example: %s", X_train[1000000])
-        logger.debug("X_train[5000000] example: %s", X_train[5000000])
+        for event_idx in self.cfg.logging.events_to_log_in_debug:
+                if event_idx < len(X):
+                    logger.debug("Data[%d] example: %s", event_idx, X_train[event_idx])
 
         X_val, X_test, y_val, y_test = train_test_split(
             X_temp,
@@ -286,7 +306,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             shuffle=True,
             num_workers=self.train_num_workers,
             persistent_workers=self.train_num_workers > 0,
-            drop_last=True,
+            drop_last=False,
             pin_memory=True,
         )
 
@@ -297,12 +317,12 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=self.val_num_workers,
             persistent_workers=self.val_num_workers > 0,
-            drop_last=True,
+            drop_last=False,
             pin_memory=True,
         )
 
     def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.val_batch_size, shuffle=False, num_workers=8)
+        return DataLoader(self.test_dataset, batch_size=self.val_batch_size, shuffle=False, num_workers=8,drop_last=False)
 
     def predict_dataloader(self):
         return self.test_dataloader()

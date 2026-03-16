@@ -5,7 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-PARAMETER_DECIMALS = 1
+PARAMETER_DECIMALS = 3
 
 def normalize_parameter_value(value: float) -> float:
     return round(float(value), PARAMETER_DECIMALS)
@@ -75,7 +75,10 @@ def build_indices_per_parameter_point(
     for point in parameter_points:
         point_array = np.asarray(point, dtype=float)
         indices = np.argwhere(np.all(np.isclose(normalized_points, point_array, atol=1e-3), axis=1)).flatten()
-        if len(indices) > max_events_per_parameter:
+        if max_events_per_parameter == -1:
+            out[point] = indices
+            continue
+        elif len(indices) > max_events_per_parameter:
             indices = np.random.choice(indices, max_events_per_parameter, replace=False)
         out[point] = indices
     return out
