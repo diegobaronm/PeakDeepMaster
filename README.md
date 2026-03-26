@@ -34,6 +34,7 @@ python PeakDeepMaster.py --config-name config_2D general.mode=train
 | `predict`     | Run prediction on the test split and export a CSV with scores, labels, and categories. |
 | `performance` | Evaluate test and holdout splits, producing ROC curves, score distributions, and summary CSVs. |
 | `inference`   | Scan over parameter values using the RoSMM method and compute an $L^2$ statistic to find the best-fit parameter(s). |
+| `input_plots` | Generate per-parameter-point distribution plots for all variables listed in `input_plots.variables`. |
 
 ## Project Structure
 

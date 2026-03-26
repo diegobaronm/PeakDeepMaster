@@ -12,6 +12,7 @@ from src.utils.Train import train
 from src.utils.Predict import predict
 from src.utils.Performance import testing
 from src.utils.Inference import run_inference
+from src.utils.InputPlots import run_input_plots
 from src.utils.utils import setup_logging
 
 
@@ -37,6 +38,9 @@ def main(cfg: DictConfig) -> None:
             testing(datamodule, LLHRatioEstimator, cfg)
         elif cfg.general.mode == "inference":
             run_inference(datamodule, LLHRatioEstimator, cfg)
+        elif cfg.general.mode == "input_plots":
+            logger.info("Generating input variable plots...")
+            run_input_plots(cfg)
         else:
             raise ValueError(f"Unsupported mode: {cfg.general.mode}")
     except ConfigAttributeError:

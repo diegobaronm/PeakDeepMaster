@@ -89,11 +89,6 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         self.holdout_dataset = None
         self._has_setup = False
 
-    def _build_stratify_labels(self, y: np.ndarray) -> np.ndarray:
-        labels = y[:, 0].astype(int)
-        categories = y[:, 1].astype(int)
-        return np.asarray([f"{label}_{category}" for label, category in zip(labels, categories)])
-
     def setup(self, stage: str | None = None):
         if self._has_setup:
             return
@@ -185,6 +180,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             y,
             self.training_parameter_grid,
             parameter_column_indices=parameter_column_indices,
+            parameter_point_to_category=self.parameter_point_to_category,
         )
         for event_idx in self.cfg.logging.events_to_log_in_debug:
                 if event_idx < len(X):
@@ -235,13 +231,13 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                     logger.debug("Data_wo_holdout[%d] example: %s", event_idx, X_model[event_idx])
 
         logger.info("Splitting data into train, val, and test sets...")
-        stratify_model = y_model[:, 1] # self._build_stratify_labels(y_model)
+        stratify_model = y_model
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=self.cfg.general.seed)
         train_idx, temp_idx = next(sss.split(X_model, stratify_model))
 
         X_train, y_train = X_model[train_idx], y_model[train_idx]
         X_temp, y_temp = X_model[temp_idx], y_model[temp_idx]
-        stratify_temp = self._build_stratify_labels(y_temp)
+        stratify_temp = y_temp
 
         for event_idx in self.cfg.logging.events_to_log_in_debug:
                 if event_idx < len(X):
@@ -255,6 +251,15 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             stratify=stratify_temp,
             random_state=self.cfg.general.seed,
         )
+
+        # Convert background [label,categories] back to [0,0]
+        logger.info("Converting background labels back to [0, 0] format...")
+        y_train_bg_mask = y_train[:, 0] == 0
+        y_train[y_train_bg_mask, 1] = 0
+        y_test_bg_mask = y_test[:, 0] == 0
+        y_test[y_test_bg_mask, 1] = 0
+        y_val_bg_mask = y_val[:, 0] == 0
+        y_val[y_val_bg_mask, 1] = 0
 
         logger.debug("Exporting to TensorDatasets...")
         self.train_dataset = self._to_dataset(X_train, y_train, stage=stage)

@@ -92,3 +92,50 @@ inference:
       n_points: 50
   n_pseudo_experiments: 1000
   pseudo_experiment_confidence: 0.95
+
+input_plots:
+  output_dir: results/input_plots/2D/
+  n_bins: 100
+  density: true
+  variables:
+    - group: EVENT_PARTICLES
+      name: top1_pt
+      display_name: "top1_pt [GeV]"
+      x_min: 0
+      x_max: 500
+    - group: EVENT_PARTICLES
+      name: top2_pt
+      display_name: "top2_pt [GeV]"
+      x_min: 0
+      x_max: 500
+    - group: EVENT_PARTICLES
+      name: top1_eta
+      display_name: top1_eta
+      x_min: -5
+      x_max: 5
+    - group: EVENT_PARTICLES
+      name: top2_eta
+      display_name: top2_eta
+      x_min: -5
+      x_max: 5
+    - group: EVENT_GLOBAL
+      name: mttbar
+      display_name: "mttbar [GeV]"
+      x_min: 500
+      x_max: 1200
+    - group: EVENT_GLOBAL
+      name: coupling
+      display_name: Coupling
+      x_min: 0
+      x_max: 2
+    - group: EVENT_GLOBAL
+      name: hmass
+      display_name: "hmass [GeV]"
+      x_min: 500
+      x_max: 1100
+    - group: EVENT_GLOBAL
+      name: lumiWeight
+      display_name: "lumiWeight"
+      x_min: -2
+      x_max: 2
+      use_weights: false
