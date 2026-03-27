@@ -18,6 +18,9 @@ logging:
 dataset:
   input_h5_path: data/Mass_Inference_negW.h5
   max_events_per_parameter: 800000
+  cache:
+    save_path: data/cache/1D_mass_inference.pkl
+    load_path: data/cache/1D_mass_inference.pkl
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler

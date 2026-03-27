@@ -19,6 +19,9 @@ logging:
 dataset:
   input_h5_path: data/2D_Inference_negW.h5
   max_events_per_parameter: 854000
+  cache:
+    save_path: /data/dbaronmo/pickled/2D_inference.pkl
+    load_path: /data/dbaronmo/pickled/2D_inference.pkl
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
@@ -71,22 +74,22 @@ performance:
   batch_size: 20480
 
 inference:
-  output_dir: results/inference/coupling_1p1_hmass_870_zoom_correct_split/
+  output_dir: results/inference/coupling_0p5_hmass_650_zoom_correct_split/
   model_pp_checkpoint: training_logs/2D_PP_256/version_0/checkpoints/
   model_pn_checkpoint: training_logs/2D_PN_256/version_0/checkpoints/
   observable: mttbar
   rosmm_sign: -1.0
   truth_parameters:
-    coupling: 1.1
-    hmass: 870.0
+    coupling: 0.5
+    hmass: 650.0
   scan_parameters:
     - name: coupling
-      min: 1.2
-      max: 1.0
+      min: 0.49
+      max: 0.51
       n_points: 50
     - name: hmass
-      min: 868.0
-      max: 872.0
+      min: 649.0
+      max: 650.0
       n_points: 50
   n_pseudo_experiments: 1000
   pseudo_experiment_confidence: 0.95

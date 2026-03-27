@@ -1,5 +1,8 @@
 import h5py
 import logging
+import pickle
+from pathlib import Path
+
 import lightning as L
 import numpy as np
 import torch
@@ -89,10 +92,70 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         self.holdout_dataset = None
         self._has_setup = False
 
+    # -- Dataset cache helpers ------------------------------------------------
+
+    _CACHE_ATTRIBUTES = (
+        "scaler",
+        "parameters_category_dict",
+        "parameter_point_to_category",
+        "category_to_parameter_point",
+        "feature_index_map",
+        "transformed_feature_keys",
+        "parameter_column_indices",
+        "parameter_column_index",
+        "parameter_transformer_names",
+        "weight_column_index",
+        "observable_column_indices",
+        "x_column_indices",
+        "X_holdout",
+        "y_holdout",
+        "train_dataset",
+        "val_dataset",
+        "test_dataset",
+        "holdout_dataset",
+    )
+
+    def _save_cache(self, path: str) -> None:
+        """Pickle the processed datasets and metadata to *path*."""
+        cache_path = Path(path)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        state = {attr: getattr(self, attr) for attr in self._CACHE_ATTRIBUTES}
+        with open(cache_path, "wb") as fh:
+            pickle.dump(state, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        logger.info("Saved dataset cache to %s", cache_path)
+
+    def _load_cache(self, path: str) -> None:
+        """Restore processed datasets and metadata from a pickle at *path*."""
+        cache_path = Path(path)
+        with open(cache_path, "rb") as fh:
+            state = pickle.load(fh)
+        for attr in self._CACHE_ATTRIBUTES:
+            setattr(self, attr, state[attr])
+        logger.info("Loaded dataset cache from %s", cache_path)
+
+    # ------------------------------------------------------------------------
+
     def setup(self, stage: str | None = None):
         if self._has_setup:
             return
         self._has_setup = True
+
+        # Check for dataset cache configuration.
+        cache_cfg = getattr(self.cfg.dataset, "cache", None)
+        load_path = None
+        save_path = None
+        if cache_cfg is not None:
+            load_path = getattr(cache_cfg, "load_path", None)
+            save_path = getattr(cache_cfg, "save_path", None)
+            if load_path is not None:
+                load_path = resolve_runtime_path(str(load_path))
+            if save_path is not None:
+                save_path = resolve_runtime_path(str(save_path))
+
+        if load_path is not None and Path(load_path).is_file():
+            logger.info("Loading cached dataset from %s", load_path)
+            self._load_cache(load_path)
+            return
 
         logger.info("Preparing data for stage = %s.\nWith data from file = %s", self.cfg.general.mode, self.input_h5_path)
 
@@ -274,6 +337,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             len(self.test_dataset),
             0 if self.X_holdout is None else len(self.X_holdout),
         )
+
+        if save_path is not None:
+            self._save_cache(save_path)
 
     def _to_dataset(self, X: np.ndarray, y: np.ndarray, stage: str) -> TensorDataset:
         X_tensor = torch.tensor(X, dtype=torch.float32)
