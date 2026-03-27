@@ -13,15 +13,13 @@ logging:
   events_to_log_in_debug: [0, 1000, 200000]
   train:
     output_dir: training_logs
-    experiment_name: 1D_mass_PN
+    experiment_name: 1D_mass_PN_256_correct_split
 
 dataset:
   input_h5_path: data/Mass_Inference_negW.h5
   max_events_per_parameter: 800000
   observables:
     - EVENT_PARTICLES: top1_pt
-      transformation: LogScaler
-    - EVENT_PARTICLES: top2_pt
       transformation: LogScaler
     - EVENT_PARTICLES: top1_eta
       transformation: StandardScaler
@@ -45,7 +43,7 @@ dataset:
 
 
 model:
-  hidden_dim: 64
+  hidden_dim: 256
   dropout: 0.05
 
 train:
@@ -63,19 +61,73 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: training_logs/1D_mass_PP/version_0/checkpoints/
-  output_dir: results/performance/1D_mass_PP/
+  checkpoint_path: training_logs/1D_mass_PP_256_correct_split/version_0/checkpoints/
+  output_dir: results/performance/1D_mass_PP_256_correct_split/
   batch_size: 10240
 
 inference:
-  output_dir: results/inference/mass_870_zoom
-  model_pp_checkpoint: training_logs/1D_mass_PP/version_0/checkpoints/
-  model_pn_checkpoint: training_logs/1D_mass_PN/version_0/checkpoints/
+  output_dir: results/inference/mass_870_256_zoom_correct_split/
+  model_pp_checkpoint: training_logs/1D_mass_PP_256_correct_split/version_0/checkpoints/
+  model_pn_checkpoint: training_logs/1D_mass_PN_256_correct_split/version_0/checkpoints/
   observable: mttbar
   rosmm_sign: -1.0
   truth_parameter: 870.0
-  theta_min: 870.7
-  theta_max: 871.9
+  theta_min: 869.0 # 550 min
+  theta_max: 872.0 # 1100 max
   n_points: 100
-  n_pseudo_experiments: 1000
+  n_pseudo_experiments: 10000
   pseudo_experiment_confidence: 0.95
+
+input_plots:
+  output_dir: results/input_plots/1D_mass/
+  n_bins: 100
+  density: true
+  signal_plus_background: true
+  log_scale: true
+  variables:
+    - group: EVENT_PARTICLES
+      name: top1_pt
+      display_name: "Top1 $p_{T}$"
+      x_min: 0
+      x_max: 500
+      x_label: "$p_{T}(t_1)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top2_pt
+      display_name: "Top2 $p_{T}$"
+      x_min: 0
+      x_max: 500
+      x_label: "$p_{T}(t_2)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top1_eta
+      display_name: "Top1 $\\eta$"
+      x_min: -5
+      x_max: 5
+      x_label: "$\\eta(t_1)$"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top2_eta
+      display_name: "Top2 $\\eta$"
+      x_min: -5
+      x_max: 5
+      x_label: "$\\eta(t_2)$"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: mttbar
+      display_name: "Invariant mass $t_1 t_2$ system"
+      x_min: 500
+      x_max: 1200
+      x_label: "$m(t_1 ,t_2)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: hmass
+      display_name: "hmass [GeV]"
+      x_min: 500
+      x_max: 1100
+    - group: EVENT_GLOBAL
+      name: lumiWeight
+      display_name: "lumiWeight"
+      x_min: -2
+      x_max: 2
+      use_weights: false

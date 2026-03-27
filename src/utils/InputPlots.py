@@ -66,6 +66,105 @@ def _compare_distributions(
     logger.info("Saved %s", output_path)
 
 
+def _signal_plus_background_distributions(
+    variable: np.ndarray,
+    weights: np.ndarray,
+    labels: np.ndarray,
+    indices_per_point: dict[tuple[float, ...], np.ndarray],
+    parameter_names: list[str],
+    x_range: list[float],
+    variable_name: str,
+    n_bins: int,
+    use_weights: bool,
+    x_label: str | None,
+    y_label: str | None,
+    output_dir: Path,
+    file_prefix: str,
+    log_scale: bool = False,
+):
+    """For each signal parameter point, plot signal+BG combined as density."""
+    # Collect all background indices across parameter points.
+    bg_indices_list = []
+    signal_point_indices: dict[tuple[float, ...], np.ndarray] = {}
+    for point, indices in indices_per_point.items():
+        point_labels = labels[indices]
+        point_bg = indices[point_labels == 0]
+        point_sig = indices[point_labels == 1]
+        if len(point_bg) > 0:
+            bg_indices_list.append(point_bg)
+        if len(point_sig) > 0:
+            signal_point_indices[point] = point_sig
+
+    if len(bg_indices_list) == 0 or len(signal_point_indices) == 0:
+        logger.warning("Not enough signal/BG events to produce S+BG plots for %s", variable_name)
+        return
+
+    bg_indices = np.concatenate(bg_indices_list)
+
+    # Build the BG histogram once.
+    bg_w = weights[bg_indices] if use_weights else None
+    bg_counts, bin_edges = np.histogram(
+        variable[bg_indices], bins=n_bins, range=x_range, weights=bg_w,
+    )
+
+    for point, sig_idx in signal_point_indices.items():
+        point_label = ", ".join(
+            f"{name}={value:g}" for name, value in zip(parameter_names, point)
+        )
+        sig_w = weights[sig_idx] if use_weights else None
+        sig_counts, _ = np.histogram(
+            variable[sig_idx], bins=n_bins, range=x_range, weights=sig_w,
+        )
+
+        combined = bg_counts + sig_counts
+        bin_widths = np.diff(bin_edges)
+
+        # Normalise each to density using absolute area.
+        bg_density = bg_counts.copy()
+        abs_area_bg = np.sum(np.abs(bg_density) * bin_widths)
+        if abs_area_bg > 0:
+            bg_density = bg_density / abs_area_bg
+
+        combined_density = combined.copy()
+        abs_area_comb = np.sum(np.abs(combined_density) * bin_widths)
+        if abs_area_comb > 0:
+            combined_density = combined_density / abs_area_comb
+
+        slug = "_".join(f"{v:g}" for v in point).replace(".", "p").replace("-", "m")
+
+        # Always produce the linear-scale plot.
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
+        ax.stairs(bg_density, bin_edges, label="Background")
+        ax.stairs(combined_density, bin_edges, label=f"S+BG ({point_label})")
+        ax.set_xlabel(x_label if x_label is not None else variable_name)
+        ax.set_xlim(x_range)
+        ax.set_ylabel(y_label if y_label is not None else "Density")
+        ax.set_title(f"S+BG distribution of {variable_name} ({point_label})")
+        ax.legend(fontsize="small")
+        fig.tight_layout()
+        out_path = output_dir / f"{file_prefix}_splusbg_{slug}.pdf"
+        fig.savefig(out_path)
+        plt.close(fig)
+        logger.info("Saved %s", out_path)
+
+        # Optionally produce a log-scale version as well.
+        if log_scale:
+            fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
+            ax.stairs(bg_density, bin_edges, label="Background")
+            ax.stairs(combined_density, bin_edges, label=f"S+BG ({point_label})")
+            ax.set_xlabel(x_label if x_label is not None else variable_name)
+            ax.set_xlim(x_range)
+            ax.set_ylabel(y_label if y_label is not None else "Density")
+            ax.set_title(f"S+BG distribution of {variable_name} ({point_label})")
+            ax.set_yscale("log")
+            ax.legend(fontsize="small")
+            fig.tight_layout()
+            out_path = output_dir / f"{file_prefix}_splusbg_{slug}_log.pdf"
+            fig.savefig(out_path)
+            plt.close(fig)
+            logger.info("Saved %s", out_path)
+
+
 def run_input_plots(cfg: DictConfig) -> None:
     """Generate per-parameter-point distribution plots for all configured variables."""
     input_h5_path = resolve_runtime_path(cfg.dataset.input_h5_path)
@@ -76,6 +175,8 @@ def run_input_plots(cfg: DictConfig) -> None:
 
     n_bins = int(getattr(cfg.input_plots, "n_bins", 100))
     density = bool(getattr(cfg.input_plots, "density", False))
+    signal_plus_bg = bool(getattr(cfg.input_plots, "signal_plus_background", False))
+    log_scale = bool(getattr(cfg.input_plots, "log_scale", False))
     global_x_label = getattr(cfg.input_plots, "x_label", None)
     global_y_label = getattr(cfg.input_plots, "y_label", None)
     max_events = int(cfg.dataset.max_events_per_parameter)
@@ -108,6 +209,9 @@ def run_input_plots(cfg: DictConfig) -> None:
         w_group, w_variable = parse_feature_spec(weight_specs[0])
         weights = data_file["INPUTS"][w_group][w_variable][:]
 
+        # Load class labels for S+BG plots.
+        labels = data_file["LABELS"]["CLASS"][:].flatten() if signal_plus_bg else None
+
         for var_cfg in plot_vars:
             group = str(var_cfg.group)
             name = str(var_cfg.name)
@@ -119,6 +223,7 @@ def run_input_plots(cfg: DictConfig) -> None:
             var_density = bool(getattr(var_cfg, "density", density))
             var_x_label = getattr(var_cfg, "x_label", global_x_label)
             var_y_label = getattr(var_cfg, "y_label", global_y_label)
+            var_log_scale = bool(getattr(var_cfg, "log_scale", log_scale))
             if var_x_label is not None:
                 var_x_label = str(var_x_label)
             if var_y_label is not None:
@@ -144,5 +249,23 @@ def run_input_plots(cfg: DictConfig) -> None:
                 y_label=var_y_label,
                 output_path=output_path,
             )
+
+            if signal_plus_bg and use_weights:
+                _signal_plus_background_distributions(
+                    variable=values,
+                    weights=weights,
+                    labels=labels,
+                    indices_per_point=indices_per_point,
+                    parameter_names=parameter_names,
+                    x_range=[x_min, x_max],
+                    variable_name=display_name,
+                    n_bins=var_n_bins,
+                    use_weights=True,
+                    x_label=var_x_label,
+                    y_label=var_y_label,
+                    output_dir=output_dir,
+                    file_prefix=safe_name,
+                    log_scale=var_log_scale,
+                )
 
     logger.info("All input plots saved to %s", output_dir)
