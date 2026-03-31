@@ -15,12 +15,18 @@ def normalize_parameter_point(values) -> tuple[float, ...]:
     return tuple(normalize_parameter_value(value) for value in array)
 
 def parse_feature_spec(spec: dict) -> tuple[str, str]:
-    ignored_keys = {"transformation", "values_for_training", "values_for_testing"}
+    ignored_keys = {"transformation", "values_for_training", "values_for_testing", "split_only",
+                    "add_to_holdout", "remove_from_holdout"}
     for key, value in spec.items():
         if key in ignored_keys:
             continue
         return str(key), str(value)
     raise ValueError(f"Invalid feature spec: {spec}")
+
+
+def is_split_only(spec: dict) -> bool:
+    """Return True if the parameter spec is marked as split-only."""
+    return bool(spec.get("split_only", False))
 
 def normalize_feature_specs(specs) -> list[dict]:
     return [dict(spec) for spec in specs]
@@ -196,7 +202,12 @@ def norm_weights_per_category_and_sign(weights: np.ndarray, categories: np.ndarr
     return out
 
 
-def holdout_mask_from_parameter_matrix(parameter_matrix: np.ndarray, parameter_specs: list[dict]) -> np.ndarray:
+def holdout_mask_from_parameter_matrix(
+    parameter_matrix: np.ndarray,
+    parameter_specs: list[dict],
+    add_to_holdout: list[tuple[float, ...]] | None = None,
+    remove_from_holdout: list[tuple[float, ...]] | None = None,
+) -> np.ndarray:
     parameter_matrix = np.asarray(parameter_matrix, dtype=float)
     if parameter_matrix.ndim == 1:
         parameter_matrix = parameter_matrix.reshape(-1, 1)
@@ -210,6 +221,29 @@ def holdout_mask_from_parameter_matrix(parameter_matrix: np.ndarray, parameter_s
             np.round(parameter_matrix[:, column_index], PARAMETER_DECIMALS),
             holdout_values,
         )
+
+    # Add specific parameter-point tuples to holdout.
+    if add_to_holdout:
+        rounded = np.round(parameter_matrix, PARAMETER_DECIMALS)
+        for point in add_to_holdout:
+            norm_point = np.asarray(normalize_parameter_point(point), dtype=float)
+            match = np.all(np.isclose(rounded, norm_point, atol=1e-3), axis=1)
+            holdout_mask |= match
+
+    # Remove specific parameter-point tuples from holdout.
+    if remove_from_holdout:
+        rounded = np.round(parameter_matrix, PARAMETER_DECIMALS)
+        for point in remove_from_holdout:
+            norm_point = np.asarray(normalize_parameter_point(point), dtype=float)
+            match = np.all(np.isclose(rounded, norm_point, atol=1e-3), axis=1)
+            holdout_mask &= ~match
+
+    # Print the holdout parameter points for debugging
+    holdout_points = parameter_matrix[holdout_mask]
+    holdout_points = set(tuple(point) for point in holdout_points)
+    for point in holdout_points:
+        logger.info("Holdout parameter point: %s", point)
+
     return holdout_mask
 
 

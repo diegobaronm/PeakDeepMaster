@@ -1,0 +1,159 @@
+general:
+  mode: train
+  device: cuda
+  seed: 42
+
+logging:
+  level: INFO
+  format: '%(asctime)s | %(levelname)s | %(name)s | %(message)s'
+  datefmt: '%Y-%m-%d %H:%M:%S'
+  colors: auto
+  file: null
+  capture_warnings: true
+  events_to_log_in_debug: [0, 1000, 200000]
+  train:
+    output_dir: training_logs
+    experiment_name: 2D_PP_256
+
+
+dataset:
+  input_h5_path: /data/dbaronmo/NTuples_Width_Test/Width_dataset.h5
+  max_events_per_parameter: 854000
+  cache:
+    save_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
+    load_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
+  observables:
+    - EVENT_PARTICLES: top1_pt
+      transformation: LogScaler
+    - EVENT_PARTICLES: top1_eta
+      transformation: StandardScaler
+    - EVENT_PARTICLES: top2_eta
+      transformation: StandardScaler
+    - EVENT_GLOBAL: mttbar
+      transformation: StandardScaler
+  parameters:
+    - EVENT_GLOBAL: coupling
+      transformation: MinMaxScaler
+      values_for_training: [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+      values_for_testing: [0.5, 0.7, 1.1]
+    - EVENT_GLOBAL: hmass
+      transformation: MinMaxScaler
+      values_for_training: [600.0, 700.0, 800.0, 900.0, 1000.0]
+      values_for_testing: [650.0, 870.0, 950.0]
+    - EVENT_GLOBAL: hwidth
+      transformation: MinMaxScaler
+      values_for_training: [2.0]
+      values_for_testing: [5.0, 10.0, 15.0, 30.0]
+      split_only: true
+      add_to_holdout:
+        - [0.7, 950.0, 2.0]
+      # remove_from_holdout:
+      #  - [1.0, 800.0, 2.0]
+  weights:
+    - EVENT_GLOBAL: lumiWeight
+  train:
+    num_workers: 12
+    batch_size: 20480
+  val:
+    num_workers: 12
+    batch_size: 20480
+
+
+model:
+  hidden_dim: 256
+  dropout: 0.05
+
+train:
+  n_epochs: 300
+  learning_rate: 0.0004
+  weight_decay: 0.001
+  lr_patience: 10
+  lr_factor: 0.8
+  signal_weight_sign: negative
+  background_weight_sign: positive
+  compile: false
+
+predict:
+  checkpoint_path: lightning_logs/version_0/checkpoints/
+  output_file: results/predictions.csv
+
+performance:
+  checkpoint_path: training_logs/2D_PN_256/version_0/checkpoints/
+  output_dir: results/performance/2D_PN_256/
+  batch_size: 20480
+
+inference:
+  output_dir: results/inference/coupling_0p7_hmass_950_zoom_correct_split/
+  model_pp_checkpoint: training_logs/2D_PP_256/version_0/checkpoints/
+  model_pn_checkpoint: training_logs/2D_PN_256/version_0/checkpoints/
+  observable: mttbar
+  rosmm_sign: -1.0
+  truth_parameters:
+    coupling: 0.7
+    hmass: 950.0
+    hwidth: 2.0
+  scan_parameters:
+    - name: coupling
+      min: 0.1
+      max: 2.5
+      n_points: 100
+    - name: hmass
+      min: 930.0
+      max: 970.0
+      n_points: 50
+  n_pseudo_experiments: 1000
+  pseudo_experiment_confidence: 0.95
+
+input_plots:
+  output_dir: results/input_plots/2D_width/
+  n_bins: 100
+  density: true
+  signal_plus_background: true
+  log_scale: true
+  variables:
+    - group: EVENT_PARTICLES
+      name: top1_pt
+      display_name: "Top1 $p_{T}$"
+      x_min: 0
+      x_max: 500
+      x_label: "$p_{T}(t_1)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top2_pt
+      display_name: "Top2 $p_{T}$"
+      x_min: 0
+      x_max: 500
+      x_label: "$p_{T}(t_2)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top1_eta
+      display_name: "Top1 $\\eta$"
+      x_min: -5
+      x_max: 5
+      x_label: "$\\eta(t_1)$"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top2_eta
+      display_name: "Top2 $\\eta$"
+      x_min: -5
+      x_max: 5
+      x_label: "$\\eta(t_2)$"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: mttbar
+      display_name: "Invariant mass $t_1 t_2$ system"
+      x_min: 500
+      x_max: 1200
+      x_label: "$m(t_1 ,t_2)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: hmass
+      display_name: "hmass [GeV]"
+      x_min: 500
+      x_max: 1100
+    - group: EVENT_GLOBAL
+      name: lumiWeight
+      display_name: "lumiWeight"
+      x_min: -2
+      x_max: 2
+      use_weights: false

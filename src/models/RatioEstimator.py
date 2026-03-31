@@ -34,9 +34,14 @@ class LLHRatioEstimator(L.LightningModule):
         self.lr_patience = cfg.train.lr_patience
         self.lr_factor = cfg.train.lr_factor
 
+        from src.data.DataHelpers import is_split_only, normalize_feature_specs
+
+        parameter_specs = normalize_feature_specs(cfg.dataset.parameters)
+        model_param_count = sum(1 for spec in parameter_specs if not is_split_only(spec))
+
         self.model = RatioEstimatorNet(
             x_dim=len(cfg.dataset.observables),
-            theta_dim=len(cfg.dataset.parameters),
+            theta_dim=model_param_count,
             hidden_dim=cfg.model.hidden_dim,
             dropout=cfg.model.dropout,
         )

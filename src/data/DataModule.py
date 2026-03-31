@@ -17,7 +17,9 @@ from src.data.DataHelpers import (
     feature_key,
     get_unique_parameter_points,
     holdout_mask_from_parameter_matrix,
+    is_split_only,
     normalize_feature_specs,
+    normalize_parameter_point,
     norm_weights_per_category_and_sign,
     parameter_name_from_spec,
     parse_feature_spec,
@@ -57,6 +59,14 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         logger.debug("Parameter specs: %s", self.parameter_specs)
         self.weight_spec = weight_specs[0]
         self.parameter_names = [parameter_name_from_spec(spec) for spec in self.parameter_specs]
+
+        # Model parameters: those actually fed as theta to the network (excludes split_only).
+        self.model_parameter_specs = [spec for spec in self.parameter_specs if not is_split_only(spec)]
+        self.model_parameter_names = [parameter_name_from_spec(spec) for spec in self.model_parameter_specs]
+        if len(self.model_parameter_specs) == 0:
+            raise ValueError("At least one parameter must not be split_only")
+        logger.debug("Model parameter names: %s", self.model_parameter_names)
+
         self.parameter_axes = {
             name: axis
             for name, axis in zip(self.parameter_names, extract_parameter_axes(self.parameter_specs, "values_for_training"))
@@ -71,6 +81,14 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         logger.debug("Parameter axes: %s", self.parameter_axes)
         logger.debug("Holdout parameter axes: %s", self.holdout_parameter_axes)
         logger.debug("Training parameter grid: %s", self.training_parameter_grid)
+
+        # Parse add_to_holdout / remove_from_holdout tuples from parameter specs.
+        self.add_to_holdout = self._parse_holdout_tuples("add_to_holdout")
+        self.remove_from_holdout = self._parse_holdout_tuples("remove_from_holdout")
+        if self.add_to_holdout:
+            logger.info("Explicitly adding to holdout: %s", self.add_to_holdout)
+        if self.remove_from_holdout:
+            logger.info("Explicitly removing from holdout: %s", self.remove_from_holdout)
 
 
         self.random_seed = int(getattr(cfg.dataset, "random_seed", cfg.general.seed))
@@ -91,6 +109,25 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         self.y_holdout = None
         self.holdout_dataset = None
         self._has_setup = False
+
+    def _parse_holdout_tuples(self, key: str) -> list[tuple[float, ...]] | None:
+        """Collect add_to_holdout / remove_from_holdout lists from parameter specs."""
+        raw_lists = [spec.get(key, None) for spec in self.parameter_specs]
+        if all(v is None for v in raw_lists):
+            return None
+        # Each spec may carry a list of partial values.  We need the full
+        # N-dimensional parameter points, so the user supplies tuples directly
+        # on the *first* parameter that contains the key.  Collect from all
+        # specs and merge – but the convention is to write the full tuples in
+        # the first spec that has the key.
+        tuples: list[tuple[float, ...]] = []
+        for raw in raw_lists:
+            if raw is None:
+                continue
+            for entry in raw:
+                point = normalize_parameter_point(list(entry))
+                tuples.append(point)
+        return tuples if tuples else None
 
     # -- Dataset cache helpers ------------------------------------------------
 
@@ -221,13 +258,21 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                 )
 
         weight_group, weight_variable = parse_feature_spec(self.weight_spec)
-        parameter_feature_keys = []
-        parameter_column_indices = []
+        # All-parameter keys/indices (used for augmentation and holdout).
+        all_parameter_feature_keys = []
+        all_parameter_column_indices = []
         for parameter_spec in self.parameter_specs:
             param_group, param_variable = parse_feature_spec(parameter_spec)
             key = feature_key(param_group, param_variable)
-            parameter_feature_keys.append(key)
-            parameter_column_indices.append(self.feature_index_map[key])
+            all_parameter_feature_keys.append(key)
+            all_parameter_column_indices.append(self.feature_index_map[key])
+
+        # Model-parameter keys (only those fed as theta to the network).
+        model_parameter_feature_keys = []
+        for parameter_spec in self.model_parameter_specs:
+            param_group, param_variable = parse_feature_spec(parameter_spec)
+            model_parameter_feature_keys.append(feature_key(param_group, param_variable))
+
         weight_column_index = self.feature_index_map[feature_key(weight_group, weight_variable)]
 
         if self.cfg.general.mode == "train":
@@ -242,14 +287,14 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             X,
             y,
             self.training_parameter_grid,
-            parameter_column_indices=parameter_column_indices,
+            parameter_column_indices=all_parameter_column_indices,
             parameter_point_to_category=self.parameter_point_to_category,
         )
         for event_idx in self.cfg.logging.events_to_log_in_debug:
                 if event_idx < len(X):
                     logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
 
-        parameter_matrix_for_holdout = X[:, parameter_column_indices].copy()
+        parameter_matrix_for_holdout = X[:, all_parameter_column_indices].copy()
 
         logger.debug("Building feature scaler...")
         self.scaler, self.transformed_feature_keys = build_feature_scaler(
@@ -264,9 +309,9 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                 if event_idx < len(X):
                     logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
 
-        self.parameter_column_indices = [self.transformed_feature_keys.index(key) for key in parameter_feature_keys]
+        self.parameter_column_indices = [self.transformed_feature_keys.index(key) for key in model_parameter_feature_keys]
         self.parameter_column_index = self.parameter_column_indices[0]
-        self.parameter_transformer_names = [f"param_{name}" for name in self.parameter_names]
+        self.parameter_transformer_names = [f"param_{name}" for name in self.model_parameter_names]
         self.weight_column_index = self.transformed_feature_keys.index(feature_key(weight_group, weight_variable))
 
         self.observable_column_indices = []
@@ -281,7 +326,13 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         logger.debug("Weight column index: %d", self.weight_column_index)
 
         logger.debug("Removing the holdout datasets with parameter axes %s", self.holdout_parameter_axes)
-        holdout_mask = holdout_mask_from_parameter_matrix(parameter_matrix_for_holdout, self.parameter_specs)
+        logger.debug("Holdout parameter matrix shape: %s, and values: %s", parameter_matrix_for_holdout.shape, parameter_matrix_for_holdout)
+        holdout_mask = holdout_mask_from_parameter_matrix(
+            parameter_matrix_for_holdout,
+            self.parameter_specs,
+            add_to_holdout=self.add_to_holdout,
+            remove_from_holdout=self.remove_from_holdout,
+        )
         logger.debug("Holdout mask length: %d, holdout count: %d", len(holdout_mask), np.sum(holdout_mask))
 
         self.X_holdout = X[holdout_mask]

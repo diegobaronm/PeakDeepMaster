@@ -151,6 +151,21 @@ def review_plot(hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray, hypo
 
 
 def _get_truth_parameter_point(cfg: DictConfig, datamodule) -> tuple[float, ...]:
+    """Return the truth point using only model parameters (excludes split-only)."""
+    if hasattr(cfg.inference, "truth_parameters"):
+        truth_parameters = cfg.inference.truth_parameters
+        return tuple(float(truth_parameters[name]) for name in datamodule.model_parameter_names)
+
+    if len(datamodule.model_parameter_names) == 1 and hasattr(cfg.inference, "truth_parameter"):
+        return (float(cfg.inference.truth_parameter),)
+
+    raise ValueError(
+        "Multi-parameter inference requires inference.truth_parameters keyed by parameter name."
+    )
+
+
+def _get_full_truth_parameter_point(cfg: DictConfig, datamodule) -> tuple[float, ...]:
+    """Return the truth point using all parameters (including split-only) for holdout lookup."""
     if hasattr(cfg.inference, "truth_parameters"):
         truth_parameters = cfg.inference.truth_parameters
         return tuple(float(truth_parameters[name]) for name in datamodule.parameter_names)
@@ -167,19 +182,19 @@ def _build_scan_axes(cfg: DictConfig, datamodule) -> list[np.ndarray]:
     if hasattr(cfg.inference, "scan_parameters"):
         scan_specs = {str(spec.name): spec for spec in cfg.inference.scan_parameters}
         axes = []
-        for parameter_name in datamodule.parameter_names:
+        for parameter_name in datamodule.model_parameter_names:
             if parameter_name not in scan_specs:
                 raise ValueError(f"Missing inference.scan_parameters entry for '{parameter_name}'")
             spec = scan_specs[parameter_name]
             axes.append(np.linspace(float(spec.min), float(spec.max), int(spec.n_points)))
         return axes
 
-    if len(datamodule.parameter_names) == 1 and all(hasattr(cfg.inference, key) for key in ["theta_min", "theta_max", "n_points"]):
+    if len(datamodule.model_parameter_names) == 1 and all(hasattr(cfg.inference, key) for key in ["theta_min", "theta_max", "n_points"]):
         return [np.linspace(cfg.inference.theta_min, cfg.inference.theta_max, cfg.inference.n_points)]
 
     logger.warning("No inference.scan_parameters provided; falling back to discrete training+holdout axes.")
     axes = []
-    for parameter_name in datamodule.parameter_names:
+    for parameter_name in datamodule.model_parameter_names:
         training_values = datamodule.parameter_axes.get(parameter_name, [])
         holdout_values = datamodule.holdout_parameter_axes.get(parameter_name, [])
         combined = sorted(set(training_values) | set(holdout_values))
@@ -288,9 +303,10 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     y_hyp = datamodule.y_holdout
 
     truth_point = _get_truth_parameter_point(cfg, datamodule)
-    if truth_point not in datamodule.parameter_point_to_category:
-        raise ValueError(f"Truth parameter point {truth_point} is not present in the dataset.")
-    holdout_category = datamodule.parameter_point_to_category[truth_point]
+    full_truth_point = _get_full_truth_parameter_point(cfg, datamodule)
+    if full_truth_point not in datamodule.parameter_point_to_category:
+        raise ValueError(f"Truth parameter point {full_truth_point} is not present in the dataset.")
+    holdout_category = datamodule.parameter_point_to_category[full_truth_point]
     signal_holdout = X_hyp[(y_hyp[:, 0] == 1) & (y_hyp[:, 1] == holdout_category)]
     if len(signal_holdout) == 0:
         raise RuntimeError(f"No holdout signal events found for truth point {truth_point}.")
@@ -371,14 +387,14 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             hypothesis_shape=hypothesis_shape,
             rosmm_sign=rosmm_sign,
         )
-        theta_label = parameter_point_label(datamodule.parameter_names, theta_point)
-        if len(datamodule.parameter_names) == 1:
+        theta_label = parameter_point_label(datamodule.model_parameter_names, theta_point)
+        if len(datamodule.model_parameter_names) == 1:
             inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable, theta_label, output_dir, counter)
         if pe_estimator is not None:
             pe_estimator.add_scan_point(theta_point, infer_shape, infer_sigma)
         chi2_value = chi_squared(hypothesis_shape, infer_shape, infer_sigma, hypothesis_sigma)
         chi2_values.append(chi2_value)
-        scan_row = {name: value for name, value in zip(datamodule.parameter_names, theta_point)}
+        scan_row = {name: value for name, value in zip(datamodule.model_parameter_names, theta_point)}
         scan_row["chi2"] = chi2_value
         scan_rows.append(scan_row)
         counter += 1
@@ -390,19 +406,19 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     best_theta = theta_scan[best_idx]
     logger.info("Best parameter point: %s, chi2=%.4f", best_theta, chi2_values[best_idx])
 
-    if len(datamodule.parameter_names) == 1:
+    if len(datamodule.model_parameter_names) == 1:
         logger.info("Generating chi2 plot...")
-        chi2_plot(theta_axes[0], chi2_values_array, datamodule.parameter_names[0], truth_point, output_dir)
-    elif len(datamodule.parameter_names) == 2:
+        chi2_plot(theta_axes[0], chi2_values_array, datamodule.model_parameter_names[0], truth_point, output_dir)
+    elif len(datamodule.model_parameter_names) == 2:
         logger.info("Generating chi2 heatmap...")
-        chi2_heatmap_plot(theta_axes, chi2_values_array, datamodule.parameter_names, truth_point, output_dir)
+        chi2_heatmap_plot(theta_axes, chi2_values_array, datamodule.model_parameter_names, truth_point, output_dir)
 
     if pe_estimator is not None:
         logger.info("Running pseudo-experiment uncertainty estimation...")
         pe_estimator.find_best_fits()
-        pe_estimator.save(output_dir, datamodule.parameter_names)
+        pe_estimator.save(output_dir, datamodule.model_parameter_names)
         pe_estimator.plot(
-            parameter_names=datamodule.parameter_names,
+            parameter_names=datamodule.model_parameter_names,
             truth_point=truth_point,
             nominal_best_fit=best_theta,
             output_dir=output_dir,
@@ -445,8 +461,8 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         hypothesis_sigma,
         best_infer_shape,
         truth_infer_shape,
-        parameter_point_label(datamodule.parameter_names, best_theta),
-        parameter_point_label(datamodule.parameter_names, truth_point),
+        parameter_point_label(datamodule.model_parameter_names, best_theta),
+        parameter_point_label(datamodule.model_parameter_names, truth_point),
         observable,
         output_dir,
     )
