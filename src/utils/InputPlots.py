@@ -32,13 +32,18 @@ def _compare_distributions(
     x_label: str | None,
     y_label: str | None,
     output_path: Path,
+    font_size: int = 16,
+    parameter_display_names: list[str] | None = None,
 ):
     """Draw overlaid histograms of *variable* for each parameter point."""
+    if parameter_display_names is None:
+        parameter_display_names = parameter_names
+    plt.rcParams.update({"font.size": font_size})
     fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
 
     for point, indices in indices_per_point.items():
         label = ", ".join(
-            f"{name}={value:g}" for name, value in zip(parameter_names, point)
+            f"{display}={value:g}" for display, value in zip(parameter_display_names, point)
         )
         data = variable[indices]
         w = weights[indices] if use_weights else None
@@ -55,13 +60,19 @@ def _compare_distributions(
 
         ax.stairs(counts, bin_edges, label=label)
 
-    ax.set_xlabel(x_label if x_label is not None else variable_name)
+    ax.set_xlabel(x_label if x_label is not None else variable_name, fontsize=font_size)
     ax.set_xlim(x_range)
-    ax.set_ylabel(y_label if y_label is not None else ("Density" if density else "Events"))
-    ax.set_title(f"Distribution of {variable_name}")
-    ax.legend(fontsize="small", ncol=max(1, len(indices_per_point) // 6))
+    ax.set_ylabel(y_label if y_label is not None else ("Density" if density else "Events"), fontsize=font_size)
+    ax.set_title(f"Distribution of {variable_name}", fontsize=font_size)
+    ax.tick_params(labelsize=font_size)
+    ax.legend(
+        fontsize="small",
+        ncol=max(1, len(indices_per_point) // 6),
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+    )
     fig.tight_layout()
-    fig.savefig(output_path)
+    fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
     logger.info("Saved %s", output_path)
 
@@ -81,8 +92,12 @@ def _signal_plus_background_distributions(
     output_dir: Path,
     file_prefix: str,
     log_scale: bool = False,
+    font_size: int = 16,
+    parameter_display_names: list[str] | None = None,
 ):
     """For each signal parameter point, plot signal+BG combined as density."""
+    if parameter_display_names is None:
+        parameter_display_names = parameter_names
     # Collect all background indices across parameter points.
     bg_indices_list = []
     signal_point_indices: dict[tuple[float, ...], np.ndarray] = {}
@@ -109,7 +124,7 @@ def _signal_plus_background_distributions(
 
     for point, sig_idx in signal_point_indices.items():
         point_label = ", ".join(
-            f"{name}={value:g}" for name, value in zip(parameter_names, point)
+            f"{display}={value:g}" for display, value in zip(parameter_display_names, point)
         )
         sig_w = weights[sig_idx] if use_weights else None
         sig_counts, _ = np.histogram(
@@ -133,17 +148,19 @@ def _signal_plus_background_distributions(
         slug = "_".join(f"{v:g}" for v in point).replace(".", "p").replace("-", "m")
 
         # Always produce the linear-scale plot.
+        plt.rcParams.update({"font.size": font_size})
         fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
         ax.stairs(bg_density, bin_edges, label="Background")
         ax.stairs(combined_density, bin_edges, label=f"S+BG ({point_label})")
-        ax.set_xlabel(x_label if x_label is not None else variable_name)
+        ax.set_xlabel(x_label if x_label is not None else variable_name, fontsize=font_size)
         ax.set_xlim(x_range)
-        ax.set_ylabel(y_label if y_label is not None else "Density")
-        ax.set_title(f"S+BG distribution of {variable_name} ({point_label})")
-        ax.legend(fontsize="small")
+        ax.set_ylabel(y_label if y_label is not None else "Density", fontsize=font_size)
+        ax.set_title(f"S+BG distribution of {variable_name} ({point_label})", fontsize=font_size)
+        ax.tick_params(labelsize=font_size)
+        ax.legend(fontsize="small", loc="center left", bbox_to_anchor=(1.02, 0.5))
         fig.tight_layout()
         out_path = output_dir / f"{file_prefix}_splusbg_{slug}.pdf"
-        fig.savefig(out_path)
+        fig.savefig(out_path, bbox_inches="tight")
         plt.close(fig)
         logger.info("Saved %s", out_path)
 
@@ -152,15 +169,16 @@ def _signal_plus_background_distributions(
             fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
             ax.stairs(bg_density, bin_edges, label="Background")
             ax.stairs(combined_density, bin_edges, label=f"S+BG ({point_label})")
-            ax.set_xlabel(x_label if x_label is not None else variable_name)
+            ax.set_xlabel(x_label if x_label is not None else variable_name, fontsize=font_size)
             ax.set_xlim(x_range)
-            ax.set_ylabel(y_label if y_label is not None else "Density")
-            ax.set_title(f"S+BG distribution of {variable_name} ({point_label})")
+            ax.set_ylabel(y_label if y_label is not None else "Density", fontsize=font_size)
+            ax.set_title(f"S+BG distribution of {variable_name} ({point_label})", fontsize=font_size)
             ax.set_yscale("log")
-            ax.legend(fontsize="small")
+            ax.tick_params(labelsize=font_size)
+            ax.legend(fontsize="small", loc="center left", bbox_to_anchor=(1.02, 0.5))
             fig.tight_layout()
             out_path = output_dir / f"{file_prefix}_splusbg_{slug}_log.pdf"
-            fig.savefig(out_path)
+            fig.savefig(out_path, bbox_inches="tight")
             plt.close(fig)
             logger.info("Saved %s", out_path)
 
@@ -177,6 +195,7 @@ def run_input_plots(cfg: DictConfig) -> None:
     density = bool(getattr(cfg.input_plots, "density", False))
     signal_plus_bg = bool(getattr(cfg.input_plots, "signal_plus_background", False))
     log_scale = bool(getattr(cfg.input_plots, "log_scale", False))
+    font_size = int(getattr(cfg.input_plots, "font_size", 16))
     global_x_label = getattr(cfg.input_plots, "x_label", None)
     global_y_label = getattr(cfg.input_plots, "y_label", None)
     max_events = int(cfg.dataset.max_events_per_parameter)
@@ -184,6 +203,12 @@ def run_input_plots(cfg: DictConfig) -> None:
 
     parameter_specs = normalize_feature_specs(cfg.dataset.parameters)
     parameter_names = [parameter_name_from_spec(spec) for spec in parameter_specs]
+
+    # Build display labels for parameters from input_plots.variables x_label.
+    variable_x_labels: dict[str, str] = {}
+    for var in cfg.input_plots.variables:
+        variable_x_labels[var["name"]] = var.get("x_label", var["name"])
+    parameter_display_names = [variable_x_labels.get(n, n) for n in parameter_names]
 
     # Build the variable list to plot from the config.
     plot_vars = list(cfg.input_plots.variables)
@@ -248,6 +273,8 @@ def run_input_plots(cfg: DictConfig) -> None:
                 x_label=var_x_label,
                 y_label=var_y_label,
                 output_path=output_path,
+                font_size=font_size,
+                parameter_display_names=parameter_display_names,
             )
 
             if signal_plus_bg and use_weights:
@@ -266,6 +293,8 @@ def run_input_plots(cfg: DictConfig) -> None:
                     output_dir=output_dir,
                     file_prefix=safe_name,
                     log_scale=var_log_scale,
+                    font_size=font_size,
+                    parameter_display_names=parameter_display_names,
                 )
 
     logger.info("All input plots saved to %s", output_dir)

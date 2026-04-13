@@ -83,6 +83,7 @@ inference:
 
 input_plots:
   output_dir: results/input_plots/1D_mass/
+  font_size: 16
   n_bins: 100
   density: true
   signal_plus_background: true
@@ -118,16 +119,18 @@ input_plots:
       y_label: "Density"
     - group: EVENT_GLOBAL
       name: mttbar
-      display_name: "Invariant mass $t_1 t_2$ system"
+      display_name: "Invariant mass $t\\bar{t}$ system"
       x_min: 500
       x_max: 1200
-      x_label: "$m(t_1 ,t_2)$ [GeV]"
+      x_label: "$m(t ,\\bar{t})$ [GeV]"
       y_label: "Density"
     - group: EVENT_GLOBAL
       name: hmass
       display_name: "hmass [GeV]"
       x_min: 500
       x_max: 1100
+      x_label: "$m(S)$"
+      y_label: "Density"
     - group: EVENT_GLOBAL
       name: lumiWeight
       display_name: "lumiWeight"

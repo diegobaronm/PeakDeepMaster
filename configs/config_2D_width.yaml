@@ -106,6 +106,7 @@ inference:
 
 input_plots:
   output_dir: results/input_plots/2D_width/
+  font_size: 16
   n_bins: 100
   density: true
   signal_plus_background: true
@@ -144,13 +145,22 @@ input_plots:
       display_name: "Invariant mass $t_1 t_2$ system"
       x_min: 500
       x_max: 1200
-      x_label: "$m(t_1 ,t_2)$ [GeV]"
+      x_label: "$m(t ,\\bar{t})$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: coupling
+      display_name: Coupling
+      x_min: 0
+      x_max: 2
+      x_label: "$C_e$"
       y_label: "Density"
     - group: EVENT_GLOBAL
       name: hmass
       display_name: "hmass [GeV]"
       x_min: 500
       x_max: 1100
+      x_label: "$m(S)$"
+      y_label: "Density"
     - group: EVENT_GLOBAL
       name: lumiWeight
       display_name: "lumiWeight"

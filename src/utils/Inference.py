@@ -53,101 +53,118 @@ def _hist(values: np.ndarray, weights: np.ndarray, n_bins: int = 70, x_min: floa
     return hist_values, sigma_hist, hist_edges
 
 
-def hypothesis_plot(hypothesis_shape: np.ndarray, hypothesis_sigma: np.ndarray, hypothesis_edges: np.ndarray, observable: str, output_dir: Path):
+def hypothesis_plot(hypothesis_shape: np.ndarray, hypothesis_sigma: np.ndarray, hypothesis_edges: np.ndarray, observable_label: str, output_dir: Path, font_size: int = 14):
     logger.debug(hypothesis_shape)
     logger.debug(hypothesis_sigma)
     logger.debug(hypothesis_edges)
-    plt.clf()
+    plt.rcParams.update({"font.size": font_size})
+    fig, ax = plt.subplots(figsize=(9, 6))
     bin_centers = 0.5 * (hypothesis_edges[:-1] + hypothesis_edges[1:])
     # Draw a histogram and the error bars
-    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
-    plt.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label="Stat. Uncertainty",fmt='none',ecolor="black",capsize=2)
-    plt.title("Hypothesis normalised shape")
-    plt.xlabel("%s [GeV]" % observable)
-    plt.ylabel("Normalised events")
-    plt.legend()
-    plt.savefig(output_dir / "hypothesis_shape.pdf")
+    ax.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    ax.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label="Stat. Uncertainty", fmt='none', ecolor="black", capsize=2)
+    ax.set_title("Hypothesis normalised shape", fontsize=font_size)
+    ax.set_xlabel(observable_label, fontsize=font_size)
+    ax.set_ylabel("Normalised events", fontsize=font_size)
+    ax.tick_params(labelsize=font_size)
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.08), ncol=2, fontsize=font_size)
+    fig.savefig(output_dir / "hypothesis_shape.pdf", dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
-def inference_scan_plot(infer_shape: np.ndarray, hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray, observable: str, theta_label: str, output_dir: Path, postfix: int):
-    plt.clf()
-    plt.stairs(infer_shape, hypothesis_edges, label="Inference")
-    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
-    plt.title(f"Inference shape {theta_label}")
-    plt.xlabel("%s [GeV]" % observable)
-    plt.ylabel("Normalised events")
-    plt.legend()
+def inference_scan_plot(infer_shape: np.ndarray, hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray, observable_label: str, theta_label: str, output_dir: Path, postfix: int, font_size: int = 14):
+    plt.rcParams.update({"font.size": font_size})
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.stairs(infer_shape, hypothesis_edges, label="Inference")
+    ax.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    ax.set_title(f"Inference shape {theta_label}", fontsize=font_size)
+    ax.set_xlabel(observable_label, fontsize=font_size)
+    ax.set_ylabel("Normalised events", fontsize=font_size)
+    ax.tick_params(labelsize=font_size)
+    ax.legend(fontsize=font_size)
+    fig.tight_layout()
     plot_name = "inference_scan_%d.pdf" % postfix
-    plt.savefig(output_dir / plot_name)
+    fig.savefig(output_dir / plot_name, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
-def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_variable: str, truth_point: tuple[float, ...], output_dir: Path):
-    plt.clf()
-    plt.plot(theta_scan, chi2_values)
-    plt.title(r"$L^2$ scan")
-    plt.xlabel(param_variable)
-    plt.ylabel(r"$L^2$")
-    plt.xlim((min(theta_scan),max(theta_scan)))
-    plt.yscale('log')
-    plt.ylim((min(chi2_values)/1.2, max(chi2_values)*10))
+def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_label: str, truth_point: tuple[float, ...], output_dir: Path, font_size: int = 14):
+    plt.rcParams.update({"font.size": font_size})
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(theta_scan, chi2_values)
+    ax.set_title(r"$L^2$ scan", fontsize=font_size)
+    ax.set_xlabel(param_label, fontsize=font_size)
+    ax.set_ylabel(r"$L^2$", fontsize=font_size)
+    ax.set_xlim((min(theta_scan), max(theta_scan)))
+    ax.set_yscale('log')
+    ax.set_ylim((min(chi2_values)/1.2, max(chi2_values)*10))
+    ax.tick_params(labelsize=font_size)
     # Draw a point at the minimum chi2
     min_idx = int(np.argmin(chi2_values))
-    plt.scatter(theta_scan[min_idx], chi2_values[min_idx], color="red", marker="x", label="Best fit parameter")
+    ax.scatter(theta_scan[min_idx], chi2_values[min_idx], color="red", marker="x", label="Best fit parameter")
     # Draw a point at the truth parameter
-    plt.scatter(truth_point[0], chi2_values[min_idx], color="green", marker="o", label="Truth parameter", alpha=0.5)
-    plt.legend()
-
-    plt.savefig(output_dir / "chi2_scan.pdf")
+    ax.scatter(truth_point[0], chi2_values[min_idx], color="green", marker="o", label="Truth parameter", alpha=0.5)
+    ax.legend(fontsize=font_size)
+    fig.tight_layout()
+    fig.savefig(output_dir / "chi2_scan.pdf", dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def chi2_heatmap_plot(
     theta_axes: list[np.ndarray],
     chi2_values: np.ndarray,
-    parameter_names: list[str],
+    parameter_labels: list[str],
     truth_point: tuple[float, ...],
     output_dir: Path,
+    font_size: int = 14,
 ):
     if len(theta_axes) != 2:
         return
 
+    plt.rcParams.update({"font.size": font_size})
     grid = chi2_values.reshape(len(theta_axes[0]), len(theta_axes[1]))
-    plt.clf()
-    plt.imshow(
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(
         grid.T,
         origin="lower",
         aspect="auto",
         extent=[theta_axes[0][0], theta_axes[0][-1], theta_axes[1][0], theta_axes[1][-1]],
         norm="log",
     )
-    plt.colorbar(label=r"$\chi^2$")
-    plt.xlabel(parameter_names[0])
-    plt.ylabel(parameter_names[1])
-    plt.title(r"$\chi^2$ heatmap")
+    fig.colorbar(im, ax=ax, label=r"$\chi^2$")
+    ax.set_xlabel(parameter_labels[0], fontsize=font_size)
+    ax.set_ylabel(parameter_labels[1], fontsize=font_size)
+    ax.set_title(r"$\chi^2$ heatmap", fontsize=font_size)
+    ax.tick_params(labelsize=font_size)
     # Add a point for the minimum chi2
     min_idx = np.unravel_index(np.argmin(grid), grid.shape)
-    plt.scatter(theta_axes[0][min_idx[0]], theta_axes[1][min_idx[1]], color="red", marker="x", label="Best fit parameters")
+    ax.scatter(theta_axes[0][min_idx[0]], theta_axes[1][min_idx[1]], color="red", marker="x", label="Best fit parameters")
     # Add a point for the truth parameters
-    plt.scatter(truth_point[0], truth_point[1], color="green", marker="o", label="Truth parameters")
-    plt.legend()
-
-    plt.savefig(output_dir / "chi2_scan_heatmap.pdf")
+    ax.scatter(truth_point[0], truth_point[1], color="green", marker="o", label="Truth parameters")
+    ax.legend(fontsize=font_size)
+    fig.tight_layout()
+    fig.savefig(output_dir / "chi2_scan_heatmap.pdf", dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def review_plot(hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray, hypothesis_sigma: np.ndarray,
                  best_infer_shape: np.ndarray, truth_infer_shape: np.ndarray, 
                  best_label: str, truth_label: str,
-                 observable: str, output_dir: Path):
-    plt.clf()
-    plt.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+                 observable_label: str, output_dir: Path, font_size: int = 14):
+    plt.rcParams.update({"font.size": font_size})
+    fig, ax = plt.subplots(figsize=(9, 6))
     bin_centers = 0.5 * (hypothesis_edges[:-1] + hypothesis_edges[1:])
-    plt.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label=None,fmt='none',ecolor="black",capsize=2)
-    plt.stairs(best_infer_shape, hypothesis_edges, label=f"Inference - best {best_label}")
-    plt.stairs(truth_infer_shape, hypothesis_edges, label=f"Inference - truth {truth_label}")
-    plt.title("Inference / Hypothesis shape comparison")
-    plt.xlabel("%s [GeV]" % observable)
-    plt.ylabel("Normalised events")
-    plt.legend()
-    plt.savefig(output_dir / "inference_review.pdf")
+    ax.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
+    ax.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label=None, fmt='none', ecolor="black", capsize=2)
+    ax.stairs(best_infer_shape, hypothesis_edges, label=f"Inference - best {best_label}")
+    ax.stairs(truth_infer_shape, hypothesis_edges, label=f"Inference - truth {truth_label}")
+    ax.set_title("Inference / Hypothesis shape comparison", fontsize=font_size)
+    ax.set_xlabel(observable_label, fontsize=font_size)
+    ax.set_ylabel("Normalised events", fontsize=font_size)
+    ax.tick_params(labelsize=font_size)
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.08), ncol=2, fontsize=font_size)
+    fig.savefig(output_dir / "inference_review.pdf", dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def _get_truth_parameter_point(cfg: DictConfig, datamodule) -> tuple[float, ...]:
@@ -252,6 +269,15 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     logger.info("Setting datamodule...")
     datamodule.setup(stage="inference")
 
+    # Build display labels from input_plots config
+    variable_x_labels = {}
+    if hasattr(cfg, "input_plots") and hasattr(cfg.input_plots, "variables"):
+        for var in cfg.input_plots.variables:
+            variable_x_labels[var["name"]] = var.get("x_label", var["name"])
+    observable_label = variable_x_labels.get(observable, f"{observable} [GeV]")
+    parameter_display_names = [variable_x_labels.get(n, n) for n in datamodule.model_parameter_names]
+    font_size = int(getattr(cfg.input_plots, "font_size", 14)) if hasattr(cfg, "input_plots") else 14
+
     model_pp = model_class(cfg)
     model_pn = model_class(cfg)
 
@@ -322,7 +348,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     logger.debug("Hyp bin contents: %s", hypothesis_shape)
     logger.debug("Hyp bin uncertainties: %s", hypothesis_sigma)
     logger.debug("Hyp weights %s ", signal_holdout[:, weight_index])
-    hypothesis_plot(hypothesis_shape, hypothesis_sigma, hypothesis_edges, observable, output_dir)
+    hypothesis_plot(hypothesis_shape, hypothesis_sigma, hypothesis_edges, observable_label, output_dir, font_size)
 
     theta_axes = _build_scan_axes(cfg, datamodule)
     theta_scan = [tuple(float(value) for value in point) for point in itertools.product(*theta_axes)]
@@ -387,9 +413,9 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             hypothesis_shape=hypothesis_shape,
             rosmm_sign=rosmm_sign,
         )
-        theta_label = parameter_point_label(datamodule.model_parameter_names, theta_point)
+        theta_label = parameter_point_label(parameter_display_names, theta_point)
         if len(datamodule.model_parameter_names) == 1:
-            inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable, theta_label, output_dir, counter)
+            inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable_label, theta_label, output_dir, counter, font_size)
         if pe_estimator is not None:
             pe_estimator.add_scan_point(theta_point, infer_shape, infer_sigma)
         chi2_value = chi_squared(hypothesis_shape, infer_shape, infer_sigma, hypothesis_sigma)
@@ -408,21 +434,22 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
 
     if len(datamodule.model_parameter_names) == 1:
         logger.info("Generating chi2 plot...")
-        chi2_plot(theta_axes[0], chi2_values_array, datamodule.model_parameter_names[0], truth_point, output_dir)
+        chi2_plot(theta_axes[0], chi2_values_array, parameter_display_names[0], truth_point, output_dir, font_size)
     elif len(datamodule.model_parameter_names) == 2:
         logger.info("Generating chi2 heatmap...")
-        chi2_heatmap_plot(theta_axes, chi2_values_array, datamodule.model_parameter_names, truth_point, output_dir)
+        chi2_heatmap_plot(theta_axes, chi2_values_array, parameter_display_names, truth_point, output_dir, font_size)
 
     if pe_estimator is not None:
         logger.info("Running pseudo-experiment uncertainty estimation...")
         pe_estimator.find_best_fits()
         pe_estimator.save(output_dir, datamodule.model_parameter_names)
         pe_estimator.plot(
-            parameter_names=datamodule.model_parameter_names,
+            parameter_names=parameter_display_names,
             truth_point=truth_point,
             nominal_best_fit=best_theta,
             output_dir=output_dir,
             confidence=pe_confidence,
+            font_size=font_size,
         )
 
     logger.info("Generating review plot...")
@@ -461,8 +488,9 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         hypothesis_sigma,
         best_infer_shape,
         truth_infer_shape,
-        parameter_point_label(datamodule.model_parameter_names, best_theta),
-        parameter_point_label(datamodule.model_parameter_names, truth_point),
-        observable,
+        parameter_point_label(parameter_display_names, best_theta),
+        parameter_point_label(parameter_display_names, truth_point),
+        observable_label,
         output_dir,
+        font_size,
     )

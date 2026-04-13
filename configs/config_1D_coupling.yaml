@@ -20,8 +20,8 @@ dataset:
   input_h5_path: data/Coupling_Inference_negW.h5
   max_events_per_parameter: 830000
   cache:
-    # save_path: data/cache/1D_coupling.pkl
-    # load_path: data/cache/1D_coupling.pkl
+    #save_path: /data/dbaronmo/pickled/1D_coupling_inference.pkl
+    load_path: /data/dbaronmo/pickled/1D_coupling_inference.pkl
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
@@ -56,7 +56,7 @@ train:
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: negative
+  signal_weight_sign: positive
   background_weight_sign: positive
   compile: false
 
@@ -65,25 +65,26 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: training_logs/1D_coupling_PN_256_correct_split/version_0/checkpoints/
-  output_dir: results/performance/1D_coupling_PN_256_correct_split/
+  checkpoint_path: training_logs/1D_coupling_PP_256_correct_split/version_0/checkpoints/
+  output_dir: results/performance/1D_coupling_PP_256_correct_split/
   batch_size: 10240
 
 inference:
-  output_dir: results/inference/coupling_1p1_256_correct_split/
+  output_dir: results/inference/1D_coupling_1p1_256_zoom_correct_split/
   model_pp_checkpoint: training_logs/1D_coupling_PP_256_correct_split/version_0/checkpoints/
   model_pn_checkpoint: training_logs/1D_coupling_PN_256_correct_split/version_0/checkpoints/
   observable: mttbar
   rosmm_sign: -1.0
   truth_parameter: 1.1
-  theta_min: 0.1
-  theta_max: 2.1
+  theta_min: 1.09
+  theta_max: 1.12
   n_points: 100
   n_pseudo_experiments: 10000
   pseudo_experiment_confidence: 0.95
   
 input_plots:
   output_dir: results/input_plots/1D_coupling/
+  font_size: 16
   n_bins: 100
   density: true
   signal_plus_background: true
@@ -122,7 +123,7 @@ input_plots:
       display_name: "Invariant mass $t_1 t_2$ system"
       x_min: 500
       x_max: 1200
-      x_label: "$m(t_1 ,t_2)$ [GeV]"
+      x_label: "$m(t ,\\bar{t})$ [GeV]"
       y_label: "Density"
     - group: EVENT_GLOBAL
       name: coupling

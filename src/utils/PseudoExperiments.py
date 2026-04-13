@@ -148,6 +148,7 @@ class PseudoExperimentEstimator:
         nominal_best_fit: tuple[float, ...],
         output_dir: Path,
         confidence: float = 0.95,
+        font_size: int = 14,
     ) -> None:
         """Plot histogram of best-fit parameters with uncertainty bands."""
         output_dir = Path(output_dir)
@@ -176,12 +177,13 @@ class PseudoExperimentEstimator:
                 label=f"{confidence:.0%} CI: [{info['lower']:.4g}, {info['upper']:.4g}]",
             )
 
-            ax.set_xlabel(name)
-            ax.set_ylabel("Pseudo-experiments")
+            ax.set_xlabel(name, fontsize=font_size)
+            ax.set_ylabel("Pseudo-experiments", fontsize=font_size)
             ax.set_title(
-                f"Best-fit {name} distribution ({self.n_pseudo} pseudo-experiments)"
+                f"Best-fit {name} distribution ({self.n_pseudo} pseudo-experiments)",
+                fontsize=font_size + 1,
             )
-            ax.legend(fontsize=9)
+            ax.legend(fontsize=font_size)
 
             fig.tight_layout()
             fig.savefig(output_dir / f"pseudo_experiment_{name}.pdf", dpi=150)
