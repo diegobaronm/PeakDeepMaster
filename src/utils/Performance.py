@@ -8,7 +8,7 @@ from omegaconf import DictConfig
 from sklearn.metrics import auc, roc_curve
 from torch.utils.data import DataLoader
 
-from src.data.DataHelpers import parameter_point_label, parameter_point_slug
+from src.data.DataHelpers import build_label_skip_mask, normalize_feature_specs, parameter_point_label, parameter_point_slug
 from src.utils.utils import (
     ensure_parent_dir,
     get_latest_checkpoint_path,
@@ -35,21 +35,22 @@ def _category_label(
     parameter_names: list[str],
     category: int,
     parameter_x_labels: dict[str, str] | None = None,
+    label_skip_mask: list[bool] | None = None,
 ) -> str:
     parameter_point = category_to_parameter.get(category)
     if parameter_point is None:
         return f"category={category}"
     if parameter_x_labels:
         display_names = [parameter_x_labels.get(n, n) for n in parameter_names]
-        return parameter_point_label(display_names, parameter_point)
-    return parameter_point_label(parameter_names, parameter_point)
+        return parameter_point_label(display_names, parameter_point, skip_mask=label_skip_mask)
+    return parameter_point_label(parameter_names, parameter_point, skip_mask=label_skip_mask)
 
 
-def _category_slug(category_to_parameter: dict[int, tuple[float, ...]], parameter_names: list[str], category: int) -> str:
+def _category_slug(category_to_parameter: dict[int, tuple[float, ...]], parameter_names: list[str], category: int, label_skip_mask: list[bool] | None = None) -> str:
     parameter_point = category_to_parameter.get(category)
     if parameter_point is None:
         return f"category_{category}"
-    return parameter_point_slug(parameter_names, parameter_point)
+    return parameter_point_slug(parameter_names, parameter_point, skip_mask=label_skip_mask)
 
 
 def _collect_predictions(trainer, model, dataset, batch_size: int) -> dict[str, np.ndarray] | None:
@@ -84,6 +85,7 @@ def _plot_score_distributions(
     output_dir: Path,
     parameter_x_labels: dict[str, str] | None = None,
     font_size: int = 14,
+    label_skip_mask: list[bool] | None = None,
 ) -> None:
     signal_categories = sorted({int(cat) for cat in categories[labels == 1]})
     if len(signal_categories) == 0:
@@ -110,13 +112,12 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels)
+        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, label_skip_mask)
         plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0))
         legend_labels.append(f"S {label}")
 
     plt.xlabel("Predicted Scores", fontsize=font_size)
     plt.ylabel("Density", fontsize=font_size)
-    plt.title(f"{split_name.title()} score distributions by class category", fontsize=font_size)
     plt.yscale("log")
     plt.tick_params(labelsize=font_size)
     plt.legend(legend_labels, bbox_to_anchor=(1.35, 1.0), loc="upper right", fontsize=font_size)
@@ -132,8 +133,8 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels)
-        slug = _category_slug(category_to_parameter, parameter_names, category)
+        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, label_skip_mask)
+        slug = _category_slug(category_to_parameter, parameter_names, category, label_skip_mask)
         plt.figure(figsize=(8, 5))
         plt.hist(
             background_scores,
@@ -148,7 +149,6 @@ def _plot_score_distributions(
         plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0), label=f"Signal {label}")
         plt.xlabel("Predicted Scores", fontsize=font_size)
         plt.ylabel("Density", fontsize=font_size)
-        plt.title(f"{split_name.title()} scores: background vs {label}", fontsize=font_size)
         plt.yscale("log")
         plt.tick_params(labelsize=font_size)
         plt.legend(loc="upper right", fontsize=font_size)
@@ -167,6 +167,7 @@ def _plot_roc_curves(
     output_dir: Path,
     parameter_x_labels: dict[str, str] | None = None,
     font_size: int = 14,
+    label_skip_mask: list[bool] | None = None,
 ) -> None:
     signal_categories = sorted({int(cat) for cat in categories[labels == 1]})
     if len(signal_categories) == 0:
@@ -180,7 +181,6 @@ def _plot_roc_curves(
     plt.ylim(0.0, 1.05)
     plt.xlabel("False Positive Rate", fontsize=font_size)
     plt.ylabel("True Positive Rate", fontsize=font_size)
-    plt.title(f"{split_name.title()} ROC by class-1 category", fontsize=font_size)
     plt.tick_params(labelsize=font_size)
 
     by_category_dir = output_dir / "by_category"
@@ -197,8 +197,8 @@ def _plot_roc_curves(
 
         fpr, tpr, _ = roc_curve(selected_labels, selected_scores)
         roc_auc = auc(fpr, tpr)
-        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels)
-        slug = _category_slug(category_to_parameter, parameter_names, category)
+        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, label_skip_mask)
+        slug = _category_slug(category_to_parameter, parameter_names, category, label_skip_mask)
 
         plt.plot(fpr, tpr, lw=2, label=f"AUC = {roc_auc:.3f} -- {label}")
         roc_rows.append(
@@ -219,7 +219,6 @@ def _plot_roc_curves(
         plt.ylim(0.0, 1.05)
         plt.xlabel("False Positive Rate", fontsize=font_size)
         plt.ylabel("True Positive Rate", fontsize=font_size)
-        plt.title(f"{split_name.title()} ROC: background vs {label}", fontsize=font_size)
         plt.tick_params(labelsize=font_size)
         plt.legend(loc="lower right", fontsize=font_size)
         plt.tight_layout()
@@ -245,6 +244,7 @@ def _run_plots_for_split(
     batch_size: int,
     parameter_x_labels: dict[str, str] | None = None,
     font_size: int = 14,
+    label_skip_mask: list[bool] | None = None,
 ) -> None:
     predictions = _collect_predictions(
         trainer=trainer,
@@ -268,6 +268,7 @@ def _run_plots_for_split(
         output_dir=split_output_dir,
         parameter_x_labels=parameter_x_labels,
         font_size=font_size,
+        label_skip_mask=label_skip_mask,
     )
     _plot_roc_curves(
         scores=predictions["scores"],
@@ -279,6 +280,7 @@ def _run_plots_for_split(
         output_dir=split_output_dir,
         parameter_x_labels=parameter_x_labels,
         font_size=font_size,
+        label_skip_mask=label_skip_mask,
     )
 
 
@@ -302,5 +304,6 @@ def testing(datamodule, model_class, cfg: DictConfig) -> None:
     category_to_parameter = _category_to_parameter_map(datamodule.parameters_category_dict)
     parameter_x_labels = _build_parameter_x_labels(cfg)
     font_size = int(getattr(cfg.input_plots, "font_size", 14))
-    _run_plots_for_split(trainer, model, datamodule, "test", category_to_parameter, output_dir, batch_size, parameter_x_labels, font_size)
-    _run_plots_for_split(trainer, model, datamodule, "holdout", category_to_parameter, output_dir, batch_size, parameter_x_labels, font_size)
+    label_skip_mask = build_label_skip_mask(normalize_feature_specs(cfg.dataset.parameters))
+    _run_plots_for_split(trainer, model, datamodule, "test", category_to_parameter, output_dir, batch_size, parameter_x_labels, font_size, label_skip_mask)
+    _run_plots_for_split(trainer, model, datamodule, "holdout", category_to_parameter, output_dir, batch_size, parameter_x_labels, font_size, label_skip_mask)

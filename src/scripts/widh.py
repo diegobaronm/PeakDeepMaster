@@ -24,6 +24,5 @@ plt.plot(widths_percent, formula_couplings, marker='o', label='From model formul
 plt.plot(widths_percent, inference_couplings, marker='s', label='From inference')
 plt.xlabel('S width (%)')
 plt.ylabel('Couplings')
-plt.title('S widths vs Couplings')
 plt.legend()
 plt.savefig('widths_vs_couplings.pdf')

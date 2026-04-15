@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 
 from src.data.DataHelpers import (
     build_indices_per_parameter_point,
+    build_label_skip_mask,
     get_unique_parameter_points,
     normalize_feature_specs,
     parameter_name_from_spec,
@@ -34,6 +35,7 @@ def _compare_distributions(
     output_path: Path,
     font_size: int = 16,
     parameter_display_names: list[str] | None = None,
+    label_skip_mask: list[bool] | None = None,
 ):
     """Draw overlaid histograms of *variable* for each parameter point."""
     if parameter_display_names is None:
@@ -43,7 +45,8 @@ def _compare_distributions(
 
     for point, indices in indices_per_point.items():
         label = ", ".join(
-            f"{display}={value:g}" for display, value in zip(parameter_display_names, point)
+            f"{display}={value:g}" for i, (display, value) in enumerate(zip(parameter_display_names, point))
+            if label_skip_mask is None or not label_skip_mask[i]
         )
         data = variable[indices]
         w = weights[indices] if use_weights else None
@@ -63,7 +66,6 @@ def _compare_distributions(
     ax.set_xlabel(x_label if x_label is not None else variable_name, fontsize=font_size)
     ax.set_xlim(x_range)
     ax.set_ylabel(y_label if y_label is not None else ("Density" if density else "Events"), fontsize=font_size)
-    ax.set_title(f"Distribution of {variable_name}", fontsize=font_size)
     ax.tick_params(labelsize=font_size)
     ax.legend(
         fontsize="small",
@@ -94,6 +96,7 @@ def _signal_plus_background_distributions(
     log_scale: bool = False,
     font_size: int = 16,
     parameter_display_names: list[str] | None = None,
+    label_skip_mask: list[bool] | None = None,
 ):
     """For each signal parameter point, plot signal+BG combined as density."""
     if parameter_display_names is None:
@@ -124,7 +127,8 @@ def _signal_plus_background_distributions(
 
     for point, sig_idx in signal_point_indices.items():
         point_label = ", ".join(
-            f"{display}={value:g}" for display, value in zip(parameter_display_names, point)
+            f"{display}={value:g}" for i, (display, value) in enumerate(zip(parameter_display_names, point))
+            if label_skip_mask is None or not label_skip_mask[i]
         )
         sig_w = weights[sig_idx] if use_weights else None
         sig_counts, _ = np.histogram(
@@ -155,7 +159,6 @@ def _signal_plus_background_distributions(
         ax.set_xlabel(x_label if x_label is not None else variable_name, fontsize=font_size)
         ax.set_xlim(x_range)
         ax.set_ylabel(y_label if y_label is not None else "Density", fontsize=font_size)
-        ax.set_title(f"S+BG distribution of {variable_name} ({point_label})", fontsize=font_size)
         ax.tick_params(labelsize=font_size)
         ax.legend(fontsize="small", loc="center left", bbox_to_anchor=(1.02, 0.5))
         fig.tight_layout()
@@ -172,7 +175,6 @@ def _signal_plus_background_distributions(
             ax.set_xlabel(x_label if x_label is not None else variable_name, fontsize=font_size)
             ax.set_xlim(x_range)
             ax.set_ylabel(y_label if y_label is not None else "Density", fontsize=font_size)
-            ax.set_title(f"S+BG distribution of {variable_name} ({point_label})", fontsize=font_size)
             ax.set_yscale("log")
             ax.tick_params(labelsize=font_size)
             ax.legend(fontsize="small", loc="center left", bbox_to_anchor=(1.02, 0.5))
@@ -203,6 +205,7 @@ def run_input_plots(cfg: DictConfig) -> None:
 
     parameter_specs = normalize_feature_specs(cfg.dataset.parameters)
     parameter_names = [parameter_name_from_spec(spec) for spec in parameter_specs]
+    label_skip_mask = build_label_skip_mask(parameter_specs)
 
     # Build display labels for parameters from input_plots.variables x_label.
     variable_x_labels: dict[str, str] = {}
@@ -275,6 +278,7 @@ def run_input_plots(cfg: DictConfig) -> None:
                 output_path=output_path,
                 font_size=font_size,
                 parameter_display_names=parameter_display_names,
+                label_skip_mask=label_skip_mask,
             )
 
             if signal_plus_bg and use_weights:
@@ -295,6 +299,7 @@ def run_input_plots(cfg: DictConfig) -> None:
                     log_scale=var_log_scale,
                     font_size=font_size,
                     parameter_display_names=parameter_display_names,
+                    label_skip_mask=label_skip_mask,
                 )
 
     logger.info("All input plots saved to %s", output_dir)

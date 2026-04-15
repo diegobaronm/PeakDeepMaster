@@ -56,7 +56,7 @@ train:
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: positive
+  signal_weight_sign: negative
   background_weight_sign: positive
   compile: false
 
@@ -65,8 +65,8 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: training_logs/1D_coupling_PP_256_correct_split/version_0/checkpoints/
-  output_dir: results/performance/1D_coupling_PP_256_correct_split/
+  checkpoint_path: training_logs/1D_coupling_PN_256_correct_split/version_0/checkpoints/
+  output_dir: results/performance/1D_coupling_PN_256_correct_split/
   batch_size: 10240
 
 inference:
@@ -123,7 +123,7 @@ input_plots:
       display_name: "Invariant mass $t_1 t_2$ system"
       x_min: 500
       x_max: 1200
-      x_label: "$m(t ,\\bar{t})$ [GeV]"
+      x_label: "$m(t\\bar{t})$ [GeV]"
       y_label: "Density"
     - group: EVENT_GLOBAL
       name: coupling

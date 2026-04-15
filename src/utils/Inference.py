@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from omegaconf import DictConfig
 
-from src.data.DataHelpers import feature_key, parameter_point_label, parse_feature_spec
+from src.data.DataHelpers import build_label_skip_mask, feature_key, is_split_only, normalize_feature_specs, parameter_point_label, parse_feature_spec
 from src.utils.PseudoExperiments import PseudoExperimentEstimator
 from src.utils.utils import get_latest_checkpoint_path, load_checkpoint_into_model, resolve_runtime_path
 
@@ -63,11 +63,10 @@ def hypothesis_plot(hypothesis_shape: np.ndarray, hypothesis_sigma: np.ndarray, 
     # Draw a histogram and the error bars
     ax.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
     ax.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label="Stat. Uncertainty", fmt='none', ecolor="black", capsize=2)
-    ax.set_title("Hypothesis normalised shape", fontsize=font_size)
     ax.set_xlabel(observable_label, fontsize=font_size)
     ax.set_ylabel("Normalised events", fontsize=font_size)
     ax.tick_params(labelsize=font_size)
-    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.08), ncol=2, fontsize=font_size)
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, fontsize=font_size)
     fig.savefig(output_dir / "hypothesis_shape.pdf", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -77,7 +76,6 @@ def inference_scan_plot(infer_shape: np.ndarray, hypothesis_shape: np.ndarray, h
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.stairs(infer_shape, hypothesis_edges, label="Inference")
     ax.stairs(hypothesis_shape, hypothesis_edges, label="Hypothesis")
-    ax.set_title(f"Inference shape {theta_label}", fontsize=font_size)
     ax.set_xlabel(observable_label, fontsize=font_size)
     ax.set_ylabel("Normalised events", fontsize=font_size)
     ax.tick_params(labelsize=font_size)
@@ -92,7 +90,6 @@ def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_label: str,
     plt.rcParams.update({"font.size": font_size})
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(theta_scan, chi2_values)
-    ax.set_title(r"$L^2$ scan", fontsize=font_size)
     ax.set_xlabel(param_label, fontsize=font_size)
     ax.set_ylabel(r"$L^2$", fontsize=font_size)
     ax.set_xlim((min(theta_scan), max(theta_scan)))
@@ -131,10 +128,9 @@ def chi2_heatmap_plot(
         extent=[theta_axes[0][0], theta_axes[0][-1], theta_axes[1][0], theta_axes[1][-1]],
         norm="log",
     )
-    fig.colorbar(im, ax=ax, label=r"$\chi^2$")
+    fig.colorbar(im, ax=ax, label=r"$L^2$")
     ax.set_xlabel(parameter_labels[0], fontsize=font_size)
     ax.set_ylabel(parameter_labels[1], fontsize=font_size)
-    ax.set_title(r"$\chi^2$ heatmap", fontsize=font_size)
     ax.tick_params(labelsize=font_size)
     # Add a point for the minimum chi2
     min_idx = np.unravel_index(np.argmin(grid), grid.shape)
@@ -158,11 +154,10 @@ def review_plot(hypothesis_shape: np.ndarray, hypothesis_edges: np.ndarray, hypo
     ax.errorbar(bin_centers, hypothesis_shape, yerr=hypothesis_sigma, label=None, fmt='none', ecolor="black", capsize=2)
     ax.stairs(best_infer_shape, hypothesis_edges, label=f"Inference - best {best_label}")
     ax.stairs(truth_infer_shape, hypothesis_edges, label=f"Inference - truth {truth_label}")
-    ax.set_title("Inference / Hypothesis shape comparison", fontsize=font_size)
     ax.set_xlabel(observable_label, fontsize=font_size)
     ax.set_ylabel("Normalised events", fontsize=font_size)
     ax.tick_params(labelsize=font_size)
-    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.08), ncol=2, fontsize=font_size)
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, fontsize=font_size)
     fig.savefig(output_dir / "inference_review.pdf", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -277,6 +272,8 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     observable_label = variable_x_labels.get(observable, f"{observable} [GeV]")
     parameter_display_names = [variable_x_labels.get(n, n) for n in datamodule.model_parameter_names]
     font_size = int(getattr(cfg.input_plots, "font_size", 14)) if hasattr(cfg, "input_plots") else 14
+    model_parameter_specs = [spec for spec in normalize_feature_specs(cfg.dataset.parameters) if not is_split_only(spec)]
+    label_skip_mask = build_label_skip_mask(model_parameter_specs)
 
     model_pp = model_class(cfg)
     model_pn = model_class(cfg)
@@ -413,7 +410,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             hypothesis_shape=hypothesis_shape,
             rosmm_sign=rosmm_sign,
         )
-        theta_label = parameter_point_label(parameter_display_names, theta_point)
+        theta_label = parameter_point_label(parameter_display_names, theta_point, skip_mask=label_skip_mask)
         if len(datamodule.model_parameter_names) == 1:
             inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable_label, theta_label, output_dir, counter, font_size)
         if pe_estimator is not None:
@@ -488,8 +485,8 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         hypothesis_sigma,
         best_infer_shape,
         truth_infer_shape,
-        parameter_point_label(parameter_display_names, best_theta),
-        parameter_point_label(parameter_display_names, truth_point),
+        parameter_point_label(parameter_display_names, best_theta, skip_mask=label_skip_mask),
+        parameter_point_label(parameter_display_names, truth_point, skip_mask=label_skip_mask),
         observable_label,
         output_dir,
         font_size,

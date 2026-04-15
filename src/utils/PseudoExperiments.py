@@ -179,14 +179,10 @@ class PseudoExperimentEstimator:
 
             ax.set_xlabel(name, fontsize=font_size)
             ax.set_ylabel("Pseudo-experiments", fontsize=font_size)
-            ax.set_title(
-                f"Best-fit {name} distribution ({self.n_pseudo} pseudo-experiments)",
-                fontsize=font_size + 1,
-            )
-            ax.legend(fontsize=font_size)
+            ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=2, fontsize=font_size)
 
             fig.tight_layout()
-            fig.savefig(output_dir / f"pseudo_experiment_{name}.pdf", dpi=150)
+            fig.savefig(output_dir / f"pseudo_experiment_{name}.pdf", dpi=150, bbox_inches="tight")
             plt.close(fig)
 
             logger.info(

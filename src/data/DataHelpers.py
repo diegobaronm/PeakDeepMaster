@@ -16,7 +16,7 @@ def normalize_parameter_point(values) -> tuple[float, ...]:
 
 def parse_feature_spec(spec: dict) -> tuple[str, str]:
     ignored_keys = {"transformation", "values_for_training", "values_for_testing", "split_only",
-                    "add_to_holdout", "remove_from_holdout"}
+                    "add_to_holdout", "remove_from_holdout", "skip_label_in_plots"}
     for key, value in spec.items():
         if key in ignored_keys:
             continue
@@ -27,6 +27,10 @@ def parse_feature_spec(spec: dict) -> tuple[str, str]:
 def is_split_only(spec: dict) -> bool:
     """Return True if the parameter spec is marked as split-only."""
     return bool(spec.get("split_only", False))
+
+def build_label_skip_mask(parameter_specs: list[dict]) -> list[bool]:
+    """Return a list of booleans; True means skip that parameter in plot labels."""
+    return [bool(spec.get("skip_label_in_plots", False)) for spec in parameter_specs]
 
 def normalize_feature_specs(specs) -> list[dict]:
     return [dict(spec) for spec in specs]
@@ -247,17 +251,30 @@ def holdout_mask_from_parameter_matrix(
     return holdout_mask
 
 
-def parameter_point_label(parameter_names: list[str], point: tuple[float, ...]) -> str:
+def parameter_point_label(parameter_names: list[str], point: tuple[float, ...], skip_mask: list[bool] | None = None) -> str:
     normalized_point = normalize_parameter_point(point)
-    if len(parameter_names) == 1:
-        return f"{parameter_names[0]}={normalized_point[0]:g}"
-    return ", ".join(f"{name}={value:g}" for name, value in zip(parameter_names, normalized_point))
+    pairs = [
+        (name, value)
+        for i, (name, value) in enumerate(zip(parameter_names, normalized_point))
+        if skip_mask is None or not skip_mask[i]
+    ]
+    if not pairs:
+        pairs = list(zip(parameter_names, normalized_point))
+    if len(pairs) == 1:
+        return f"{pairs[0][0]}={pairs[0][1]:g}"
+    return ", ".join(f"{name}={value:g}" for name, value in pairs)
 
 
-def parameter_point_slug(parameter_names: list[str], point: tuple[float, ...]) -> str:
+def parameter_point_slug(parameter_names: list[str], point: tuple[float, ...], skip_mask: list[bool] | None = None) -> str:
     normalized_point = normalize_parameter_point(point)
     parts = []
-    for name, value in zip(parameter_names, normalized_point):
+    for i, (name, value) in enumerate(zip(parameter_names, normalized_point)):
+        if skip_mask is not None and skip_mask[i]:
+            continue
         encoded = f"{value:g}".replace("-", "m").replace(".", "p")
         parts.append(f"{name}_{encoded}")
+    if not parts:
+        for name, value in zip(parameter_names, normalized_point):
+            encoded = f"{value:g}".replace("-", "m").replace(".", "p")
+            parts.append(f"{name}_{encoded}")
     return "__".join(parts)

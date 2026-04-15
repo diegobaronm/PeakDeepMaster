@@ -2,7 +2,7 @@ import lightning as L
 import pandas as pd
 from omegaconf import DictConfig
 
-from src.data.DataHelpers import parameter_point_label
+from src.data.DataHelpers import build_label_skip_mask, normalize_feature_specs, parameter_point_label
 from src.utils.utils import (
     ensure_parent_dir,
     get_latest_checkpoint_path,
@@ -25,6 +25,7 @@ def predict(datamodule, model_class, cfg: DictConfig) -> None:
 
     outputs = trainer.predict(model, datamodule=datamodule)
 
+    label_skip_mask = build_label_skip_mask(normalize_feature_specs(cfg.dataset.parameters))
     rows = []
     category_to_parameter_point = datamodule.category_to_parameter_point
     for out in outputs:
@@ -41,7 +42,7 @@ def predict(datamodule, model_class, cfg: DictConfig) -> None:
                     "category": category,
                     "parameter_point": None
                     if parameter_point is None
-                    else parameter_point_label(datamodule.parameter_names, parameter_point),
+                    else parameter_point_label(datamodule.parameter_names, parameter_point, skip_mask=label_skip_mask),
                 }
             )
 

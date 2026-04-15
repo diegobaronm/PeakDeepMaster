@@ -20,8 +20,8 @@ dataset:
   input_h5_path: /data/dbaronmo/NTuples_Width_Test/Width_dataset.h5
   max_events_per_parameter: 854000
   cache:
-    save_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
-    load_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
+    # save_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
+    # load_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
@@ -69,7 +69,7 @@ train:
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: negative
+  signal_weight_sign: positive
   background_weight_sign: positive
   compile: false
 
@@ -78,8 +78,8 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: training_logs/2D_PN_256/version_0/checkpoints/
-  output_dir: results/performance/2D_PN_256/
+  checkpoint_path: training_logs/2D_PP_256/version_0/checkpoints/
+  output_dir: results/performance/2D_PP_256/
   batch_size: 20480
 
 inference:
@@ -145,7 +145,7 @@ input_plots:
       display_name: "Invariant mass $t_1 t_2$ system"
       x_min: 500
       x_max: 1200
-      x_label: "$m(t ,\\bar{t})$ [GeV]"
+      x_label: "$m(t\\bar{t})$ [GeV]"
       y_label: "Density"
     - group: EVENT_GLOBAL
       name: coupling
