@@ -23,7 +23,9 @@ from src.data.DataHelpers import (
     norm_weights_per_category_and_sign,
     parameter_name_from_spec,
     parse_feature_spec,
+    parse_parameter_point_tuple_to_list,
     structure_data,
+    parse_parameter_point_tuple_to_list
 )
 from src.data.DataScaler import build_feature_scaler
 from src.utils.utils import resolve_runtime_path
@@ -139,7 +141,6 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         "feature_index_map",
         "transformed_feature_keys",
         "parameter_column_indices",
-        "parameter_column_index",
         "parameter_transformer_names",
         "weight_column_index",
         "observable_column_indices",
@@ -197,13 +198,16 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         logger.info("Preparing data for stage = %s.\nWith data from file = %s", self.cfg.general.mode, self.input_h5_path)
 
         with h5py.File(self.input_h5_path, "r") as data_file:
+            logger.info("Reading class labels column.")
             labels_dataset = data_file["LABELS"]["CLASS"][:]
             parameter_arrays = []
+            logger.info("Reading parameter columns.")
             for parameter_spec in self.parameter_specs:
                 parameter_group, parameter_variable = parse_feature_spec(parameter_spec)
                 parameter_arrays.append(data_file["INPUTS"][parameter_group][parameter_variable][:])
 
             parameter_matrix = np.column_stack(parameter_arrays)
+            logger.info("Finding unique parameter combinations")
             parameter_points = get_unique_parameter_points(parameter_matrix)
             logger.debug("Unique parameter points in dataset: %s", parameter_points)
             missing_training_points = sorted(set(self.training_parameter_grid) - set(parameter_points))
@@ -213,16 +217,18 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                     len(missing_training_points),
                     missing_training_points,
                 )
+            logger.info("Building row indices for each parameter point.")
             indices_per_parameter = build_indices_per_parameter_point(
                 parameter_matrix=parameter_matrix,
                 parameter_points=parameter_points,
                 max_events_per_parameter=self.max_events_per_parameter,
                 random_seed=self.random_seed,
             )
-            training_indices = np.concatenate(list(indices_per_parameter.values()))
+            logger.info("Concatenating training indices across parameter points.")
+            filter_indices = np.concatenate(list(indices_per_parameter.values()))
             logger.debug("Number of parameter indices: %d", len(indices_per_parameter))
             
-            logger.debug("Structuring the data..")
+            logger.info("Structuring the data..")
             X, y, self.parameter_point_to_category, self.feature_index_map = structure_data(
                 data_file=data_file,
                 labels_dataset=labels_dataset,
@@ -230,7 +236,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                 observables_config=self.observables_config,
                 parameter_specs=self.parameter_specs,
                 weight_spec=self.weight_spec,
-                training_indices=training_indices,
+                filter_indices=filter_indices,
             )
             self.parameters_category_dict = dict(self.parameter_point_to_category)
             self.category_to_parameter_point = {
@@ -250,7 +256,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                 n_point_background = np.sum((y[:, 0] == 0) & point_mask)
                 logger.info(
                     "Parameter point %s (category %d): total=%d, signal=%d, background=%d",
-                    point,
+                    parse_parameter_point_tuple_to_list(point),
                     category,
                     n_point_events,
                     n_point_signal,
@@ -282,7 +288,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
                 if event_idx < len(X):
                     logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
 
-        logger.debug("Augmenting data for background...")
+        logger.info("Augmenting data for background... this will multiply the number of BG events by %d", len(self.training_parameter_grid))
         X, y = augment_data_for_background(
             X,
             y,
@@ -296,21 +302,33 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         parameter_matrix_for_holdout = X[:, all_parameter_column_indices].copy()
 
-        logger.debug("Building feature scaler...")
+        # Scale the features
+        logger.info("Building feature scaler...")
         self.scaler, self.transformed_feature_keys = build_feature_scaler(
             self.observables_config,
             self.parameter_specs,
             self.weight_spec,
         )
+        logger.info("Fitting and transforming features...")
+        # Fit only the training data.
+        # Construct training indices mask from the BG events and the signal events that are in the training parameter grid.
+        # The parameter grid is a list of tuples.
+        bg_mask_for_transforming = y[:, 0] == 0
+        param_values = np.round(X[:, all_parameter_column_indices].copy(), 3)
+        signal_mask_for_transforming = np.zeros(len(X), dtype=bool)
+        for grid_point in self.training_parameter_grid:
+            signal_mask_for_transforming |= np.all(np.isclose(param_values, grid_point, atol=1e-3), axis=1)
+        mask_for_transforming = bg_mask_for_transforming | signal_mask_for_transforming
 
-        logger.debug("Fitting and transforming features...")
-        X = self.scaler.fit_transform(X)
+        logger.debug("Number of events available for transformation (includes non-training): %d", len(mask_for_transforming))
+        logger.debug("Number of events to be transformed (based on training-grid): %d", mask_for_transforming.sum())
+        self.scaler.fit(X[mask_for_transforming])
+        X = self.scaler.transform(X)
         for event_idx in self.cfg.logging.events_to_log_in_debug:
                 if event_idx < len(X):
                     logger.debug("Data[%d] example: %s", event_idx, X[event_idx])
 
         self.parameter_column_indices = [self.transformed_feature_keys.index(key) for key in model_parameter_feature_keys]
-        self.parameter_column_index = self.parameter_column_indices[0]
         self.parameter_transformer_names = [f"param_{name}" for name in self.model_parameter_names]
         self.weight_column_index = self.transformed_feature_keys.index(feature_key(weight_group, weight_variable))
 
@@ -337,6 +355,10 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
         self.X_holdout = X[holdout_mask]
         self.y_holdout = y[holdout_mask]
+
+        # Check if any of the holdouts is BG. If it is raise an error, because we don't want to hold out any BG points.
+        if np.any(self.y_holdout[:, 0] == 0):
+            raise ValueError("Holdout set contains background events, which is not allowed. Please check your holdout configuration.")
 
         X_model = X[~holdout_mask]
         y_model = y[~holdout_mask]
@@ -367,13 +389,21 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         )
 
         # Convert background [label,categories] back to [0,0]
-        logger.info("Converting background labels back to [0, 0] format...")
+        logger.info("Converting background labels back to [0 - class, 0 - category] format...")
         y_train_bg_mask = y_train[:, 0] == 0
         y_train[y_train_bg_mask, 1] = 0
         y_test_bg_mask = y_test[:, 0] == 0
         y_test[y_test_bg_mask, 1] = 0
         y_val_bg_mask = y_val[:, 0] == 0
         y_val[y_val_bg_mask, 1] = 0
+
+        logger.info("Split almost complete, only sign(W) filter remains (if applicable).")
+        logger.info("Before filter... train = %d, val = %d, test = %d, holdout = %d",
+            X_train.shape[0],
+            X_val.shape[0],
+            X_test.shape[0],
+            0 if self.X_holdout is None else self.X_holdout.shape[0],
+        )
 
         logger.debug("Exporting to TensorDatasets...")
         self.train_dataset = self._to_dataset(X_train, y_train, stage=stage)
@@ -382,12 +412,73 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         self.holdout_dataset = self._to_dataset(self.X_holdout, self.y_holdout, stage=stage)
 
         logger.info(
-            "Prepared datasets: train = %d, val = %d, test = %d, holdout = %d",
+            "After filter... train = %d, val = %d, test = %d, holdout = %d",
             len(self.train_dataset),
             len(self.val_dataset),
             len(self.test_dataset),
             0 if self.X_holdout is None else len(self.X_holdout),
         )
+
+        # Generate report of train, val, test, and holdout counts per parameter point.
+        logger.info("Dataset counts per parameter point (after all processing):")
+        for point, category in self.parameter_point_to_category.items():
+            point_mask_train = y_train[:, 1] == category
+            point_mask_val = y_val[:, 1] == category
+            point_mask_test = y_test[:, 1] == category
+            point_mask_holdout = self.y_holdout[:, 1] == category if self.X_holdout is not None else np.array([False] * len(self.y_holdout))
+            n_train = np.sum(point_mask_train)
+            n_val = np.sum(point_mask_val)
+            n_test = np.sum(point_mask_test)
+            n_holdout = np.sum(point_mask_holdout)
+
+            logger.info(
+                "Parameter point %s (category %d): train=%d, val=%d, test=%d, holdout=%d",
+                parse_parameter_point_tuple_to_list(point),
+                category,
+                n_train,
+                n_val,
+                n_test,
+                n_holdout,
+            )
+
+            # Validate if things make sense.
+            # Holdout points should have zero events in train/val/test, and nonzero in holdout. Non-holdout points should have zero events in holdout.
+            if n_holdout > 0 and (n_train > 0 or n_val > 0 or n_test > 0):
+                logger.warning(
+                    "Parameter point %s has holdout events but also has train/val/test events. This may indicate a problem with the holdout configuration.",
+                    parse_parameter_point_tuple_to_list(point),
+                )
+            if n_holdout == 0 and (n_train == 0 and n_val == 0 and n_test == 0):
+                logger.warning(
+                    "Parameter point %s has no events in holdout but also has no events in train/val/test. This may indicate a problem with the holdout configuration.",
+                    parse_parameter_point_tuple_to_list(point),
+                )
+            # Points used for training should not have holdout events.
+            if n_train > 0 and n_holdout > 0:
+                logger.warning(
+                    "Parameter point %s has events in both train and holdout sets. This may indicate a problem with the holdout configuration.",
+                    parse_parameter_point_tuple_to_list(point),
+                )
+                # Check that the number of validation and test events corresponds to what we expect between a 5% margin.
+                expected_val = n_train * 0.1
+                expected_test = n_train * 0.1
+                if not (expected_val * 0.95 <= n_val <= expected_val * 1.05):
+                    logger.warning(
+                        "Parameter point %s has %d validation events, which is outside the expected range of [%d, %d] based on a 10%% split of the training events. This may indicate a problem with the data splitting.",
+                        parse_parameter_point_tuple_to_list(point),
+                        n_val,
+                        int(expected_val * 0.95),
+                        int(expected_val * 1.05),
+                    )
+                if not (expected_test * 0.95 <= n_test <= expected_test * 1.05):
+                    logger.warning(
+                        "Parameter point %s has %d test events, which is outside the expected range of [%d, %d] based on a 10%% split of the training events. This may indicate a problem with the data splitting.",
+                        parse_parameter_point_tuple_to_list(point),
+                        n_test,
+                        int(expected_test * 0.95),
+                        int(expected_test * 1.05),
+                    )
+
 
         if save_path is not None:
             self._save_cache(save_path)

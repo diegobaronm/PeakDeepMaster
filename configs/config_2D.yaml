@@ -18,10 +18,10 @@ logging:
 
 dataset:
   input_h5_path: data/2D_Inference_negW.h5
-  max_events_per_parameter: 854000
+  max_events_per_parameter: 854000 # 854000
   cache:
-    save_path: /data/dbaronmo/pickled/2D_inference.pkl
-    load_path: /data/dbaronmo/pickled/2D_inference.pkl
+    #save_path: /data/dbaronmo/pickled/2D_inference.pkl
+    #load_path: /data/dbaronmo/pickled/2D_inference.pkl
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
@@ -70,11 +70,11 @@ predict:
 
 performance:
   checkpoint_path: training_logs/2D_PN_256/version_0/checkpoints/
-  output_dir: results/performance/2D_PN_256/
+  output_dir: results/performance/2D_PN_256_DEBUG/
   batch_size: 20480
 
 inference:
-  output_dir: results/inference/coupling_0p5_hmass_650_zoom_correct_split/
+  output_dir: results/inference/coupling_0p5_hmass_650_zoom_correct_split_buuuu/
   model_pp_checkpoint: training_logs/2D_PP_256/version_0/checkpoints/
   model_pn_checkpoint: training_logs/2D_PN_256/version_0/checkpoints/
   observable: mttbar
@@ -85,12 +85,75 @@ inference:
   scan_parameters:
     - name: coupling
       min: 0.49
-      max: 0.51
-      n_points: 50
+      max: 0.53
+      n_points: 100
     - name: hmass
-      min: 649.0
-      max: 650.0
-      n_points: 50
+      min: 648.0
+      max: 652.0
+      n_points: 20
   n_pseudo_experiments: 1000
   pseudo_experiment_confidence: 0.95
 
+input_plots:
+  output_dir: results/input_plots/2D/
+  font_size: 16
+  n_bins: 100
+  density: true
+  signal_plus_background: true
+  log_scale: true
+  variables:
+    - group: EVENT_PARTICLES
+      name: top1_pt
+      display_name: "Top1 $p_{T}$"
+      x_min: 0
+      x_max: 500
+      x_label: "$p_{T}(t_1)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top2_pt
+      display_name: "Top2 $p_{T}$"
+      x_min: 0
+      x_max: 500
+      x_label: "$p_{T}(t_2)$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top1_eta
+      display_name: "Top1 $\\eta$"
+      x_min: -5
+      x_max: 5
+      x_label: "$\\eta(t_1)$"
+      y_label: "Density"
+    - group: EVENT_PARTICLES
+      name: top2_eta
+      display_name: "Top2 $\\eta$"
+      x_min: -5
+      x_max: 5
+      x_label: "$\\eta(t_2)$"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: mttbar
+      display_name: "Invariant mass $t_1 t_2$ system"
+      x_min: 500
+      x_max: 1200
+      x_label: "$m(t\\bar{t})$ [GeV]"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: coupling
+      display_name: Coupling
+      x_min: 0
+      x_max: 2
+      x_label: "$C_e$"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: hmass
+      display_name: "hmass [GeV]"
+      x_min: 500
+      x_max: 1100
+      x_label: "$m(S)$"
+      y_label: "Density"
+    - group: EVENT_GLOBAL
+      name: lumiWeight
+      display_name: "lumiWeight"
+      x_min: -2
+      x_max: 2
+      use_weights: false

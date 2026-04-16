@@ -7,6 +7,9 @@ logger = logging.getLogger(__name__)
 
 PARAMETER_DECIMALS = 3
 
+def parse_parameter_point_tuple_to_list(point_tuple: tuple[float, ...]) -> list[float]:
+    return [round(float(value), PARAMETER_DECIMALS) for value in point_tuple]
+
 def normalize_parameter_value(value: float) -> float:
     return round(float(value), PARAMETER_DECIMALS)
 
@@ -65,8 +68,9 @@ def build_parameter_grid(parameter_specs: list[dict], values_key: str = "values_
 
 
 def get_unique_parameter_points(parameter_matrix: np.ndarray) -> list[tuple[float, ...]]:
-    normalized = [normalize_parameter_point(row) for row in np.asarray(parameter_matrix, dtype=float)]
-    return sorted(set(normalized))
+    rounded = np.round(np.asarray(parameter_matrix, dtype=float), PARAMETER_DECIMALS)
+    unique_rows = np.unique(rounded, axis=0)
+    return sorted(tuple(row) for row in unique_rows)
 
 
 def build_indices_per_parameter_point(
@@ -76,10 +80,10 @@ def build_indices_per_parameter_point(
     random_seed: int,
 ) -> dict[tuple[float, ...], np.ndarray]:
     np.random.seed(random_seed)
-    normalized_points = np.asarray(
-        [normalize_parameter_point(point) for point in np.asarray(parameter_matrix, dtype=float)],
-        dtype=float,
-    )
+    normalized_points = np.asarray(np.round(np.asarray(parameter_matrix, dtype=float), PARAMETER_DECIMALS), dtype=float)
+
+    if max_events_per_parameter > -1:
+        logger.info("Filtering a maximum of events per parameter point: %d", max_events_per_parameter)
 
     out = {}
     for point in parameter_points:
@@ -101,32 +105,32 @@ def structure_data(
     observables_config: list[dict],
     parameter_specs: list[dict],
     weight_spec: dict,
-    training_indices: np.ndarray,
+    filter_indices: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, dict[tuple[float, ...], int], dict[str, int]]:
     ordered_features = []
     feature_index_map = {}
 
     for obs in observables_config:
         group_name, variable_name = parse_feature_spec(obs)
-        values = get_feature_from_h5(data_file, group_name, variable_name)[training_indices]
+        values = get_feature_from_h5(data_file, group_name, variable_name)[filter_indices]
         feature_index_map[feature_key(group_name, variable_name)] = len(ordered_features)
         ordered_features.append(values.reshape(-1, 1))
 
     parameter_columns = []
     for parameter_spec in parameter_specs:
         param_group, param_variable = parse_feature_spec(parameter_spec)
-        parameter_values = get_feature_from_h5(data_file, param_group, param_variable)[training_indices]
+        parameter_values = get_feature_from_h5(data_file, param_group, param_variable)[filter_indices]
         feature_index_map[feature_key(param_group, param_variable)] = len(ordered_features)
         ordered_features.append(parameter_values.reshape(-1, 1))
         parameter_columns.append(parameter_values.reshape(-1, 1))
 
     weight_group, weight_variable = parse_feature_spec(weight_spec)
-    weight_values = get_feature_from_h5(data_file, weight_group, weight_variable)[training_indices]
+    weight_values = get_feature_from_h5(data_file, weight_group, weight_variable)[filter_indices]
     feature_index_map[feature_key(weight_group, weight_variable)] = len(ordered_features)
     ordered_features.append(weight_values.reshape(-1, 1))
 
     X = np.concatenate(ordered_features, axis=1)
-    y = labels_dataset[training_indices]
+    y = labels_dataset[filter_indices]
 
     parameter_matrix = np.concatenate(parameter_columns, axis=1)
     parameter_point_to_category = {point: i for i, point in enumerate(parameter_points)}
@@ -246,7 +250,7 @@ def holdout_mask_from_parameter_matrix(
     holdout_points = parameter_matrix[holdout_mask]
     holdout_points = set(tuple(point) for point in holdout_points)
     for point in holdout_points:
-        logger.info("Holdout parameter point: %s", point)
+        logger.info("Holdout parameter point: %s", parse_parameter_point_tuple_to_list(point))
 
     return holdout_mask
 

@@ -48,14 +48,12 @@ class LLHRatioEstimator(L.LightningModule):
         self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
         self.x_column_indices = None
         self.parameter_column_indices = None
-        self.parameter_column_index = None
         self.weight_column_index = None
 
     def setup(self, stage: str | None = None):
         dm = self.trainer.datamodule
         self.x_column_indices = list(dm.x_column_indices)
         self.parameter_column_indices = list(dm.parameter_column_indices)
-        self.parameter_column_index = int(dm.parameter_column_index)
         self.weight_column_index = int(dm.weight_column_index)
 
     def _step(self, batch, stage: str):
