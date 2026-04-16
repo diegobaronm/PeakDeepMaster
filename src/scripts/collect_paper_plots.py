@@ -37,7 +37,7 @@ PLOT_MAP: dict[str, str] = {
     "inference/1D_coupling_0p5_256_correct_split/chi2_scan.pdf":                 "ForPaper/1D_coupling_0p5/chi2_scan.pdf",
     "inference/1D_coupling_0p5_256_correct_split/hypothesis_shape.pdf":          "ForPaper/1D_coupling_0p5/hypothesis_shape.pdf",
     "inference/1D_coupling_0p5_256_zoom_correct_split/inference_review.pdf":          "ForPaper/1D_coupling_0p5/inference_review.pdf",
-    "inference/1D_coupling_0p5_256_zoom_correct_split/pseudo_experiment_$C_e$.pdf": "ForPaper/1D_coupling_1p1/pseudo_experiment_coupling.pdf",
+    "inference/1D_coupling_0p5_256_zoom_correct_split/pseudo_experiment_$C_e$.pdf": "ForPaper/1D_coupling_0p5/pseudo_experiment_coupling.pdf",
     # 1.1
     "inference/1D_coupling_1p1_256_correct_split/chi2_scan.pdf":                 "ForPaper/1D_coupling_1p1/chi2_scan.pdf",
     "inference/1D_coupling_1p1_256_correct_split/hypothesis_shape.pdf":          "ForPaper/1D_coupling_1p1/hypothesis_shape.pdf",

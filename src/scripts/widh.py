@@ -16,7 +16,7 @@ import numpy as np
 widths = np.array([22.0, 47.5, 95.0, 142.5, 285.0])
 widths_percent = 100 * widths / MHH
 formula_couplings = coupteven * np.sqrt(widths_percent / widths_percent[0])
-inference_couplings = np.array([0.827, 1.151, 1.514, 2.16, 1.3])
+inference_couplings = np.array([0.863, 1.168, 1.524, 1.927, 3.0])
 
 # Plot widths vs (formula couplings) and (inference couplings)
 plt.rcParams.update({"font.size": 16})
