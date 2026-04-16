@@ -310,18 +310,28 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             self.weight_spec,
         )
         logger.info("Fitting and transforming features...")
-        # Fit only the training data.
-        # Construct training indices mask from the BG events and the signal events that are in the training parameter grid.
-        # The parameter grid is a list of tuples.
-        bg_mask_for_transforming = y[:, 0] == 0
-        param_values = np.round(X[:, all_parameter_column_indices].copy(), 3)
-        signal_mask_for_transforming = np.zeros(len(X), dtype=bool)
-        for grid_point in self.training_parameter_grid:
-            signal_mask_for_transforming |= np.all(np.isclose(param_values, grid_point, atol=1e-3), axis=1)
-        mask_for_transforming = bg_mask_for_transforming | signal_mask_for_transforming
+        # By default fit the scaler on all events; optionally exclude specific parameter points.
+        mask_for_transforming = np.ones(len(X), dtype=bool)
+        remove_from_scaling_raw = getattr(self.cfg.dataset, "remove_from_data_scaling", None)
+        if remove_from_scaling_raw is not None:
+            param_values = np.round(X[:, all_parameter_column_indices].copy(), 3)
+            remove_from_scaling = [normalize_parameter_point(list(entry)) for entry in remove_from_scaling_raw]
+            for point in remove_from_scaling:
+                point_match = np.all(np.isclose(param_values, point, atol=1e-3), axis=1)
+                mask_for_transforming &= ~point_match
+            n_removed = len(X) - int(mask_for_transforming.sum())
+            logger.info(
+                "Using removal for data scaling."
+                "excluded %d events matching %d parameter point(s) from scaler fitting.",
+                n_removed, len(remove_from_scaling),
+            )
+        else:
+            logger.warning(
+                "dataset.remove_from_data_scaling is not set. Assuming all data fed into this run "
+                "was used for data transformation when the model was trained. This might not be true — please check."
+            )
 
-        logger.debug("Number of events available for transformation (includes non-training): %d", len(mask_for_transforming))
-        logger.debug("Number of events to be transformed (based on training-grid): %d", mask_for_transforming.sum())
+        logger.debug("Total events: %d, events used for scaler fitting: %d", len(X), mask_for_transforming.sum())
         self.scaler.fit(X[mask_for_transforming])
         X = self.scaler.transform(X)
         for event_idx in self.cfg.logging.events_to_log_in_debug:

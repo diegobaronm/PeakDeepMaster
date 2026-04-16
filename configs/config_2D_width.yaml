@@ -20,7 +20,7 @@ dataset:
   input_h5_path: /data/dbaronmo/NTuples_Width_Test/Width_dataset.h5
   max_events_per_parameter: 854000
   cache:
-    # save_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
+    save_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
     # load_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
   observables:
     - EVENT_PARTICLES: top1_pt
@@ -42,6 +42,7 @@ dataset:
       values_for_testing: [650.0, 870.0, 950.0]
     - EVENT_GLOBAL: hwidth
       transformation: MinMaxScaler
+      skip_label_in_plots: true
       values_for_training: [2.0]
       values_for_testing: [5.0, 10.0, 15.0, 30.0]
       split_only: true
@@ -49,6 +50,13 @@ dataset:
         - [0.7, 950.0, 2.0]
       # remove_from_holdout:
       #  - [1.0, 800.0, 2.0]
+  remove_from_data_scaling:
+    - [0.7, 950.0, 2.0]
+    - [0.7, 950.0, 5.0]
+    - [0.7, 950.0, 10.0]
+    - [0.7, 950.0, 15.0]
+    - [0.7, 950.0, 30.0]
+
   weights:
     - EVENT_GLOBAL: lumiWeight
   train:
@@ -69,7 +77,7 @@ train:
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: positive
+  signal_weight_sign: negative
   background_weight_sign: positive
   compile: false
 
@@ -78,12 +86,12 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: training_logs/2D_PP_256/version_0/checkpoints/
-  output_dir: results/performance/2D_PP_256/
+  checkpoint_path: training_logs/2D_PN_256/version_0/checkpoints/
+  output_dir: results/performance/2D_PN_256_width/
   batch_size: 20480
 
 inference:
-  output_dir: results/inference/coupling_0p7_hmass_950_zoom_correct_split/
+  output_dir: results/inference/coupling_0p7_hmass_950_width_2_correct_split/
   model_pp_checkpoint: training_logs/2D_PP_256/version_0/checkpoints/
   model_pn_checkpoint: training_logs/2D_PN_256/version_0/checkpoints/
   observable: mttbar
@@ -95,13 +103,13 @@ inference:
   scan_parameters:
     - name: coupling
       min: 0.1
-      max: 2.5
-      n_points: 100
-    - name: hmass
-      min: 930.0
-      max: 970.0
+      max: 2.1
       n_points: 50
-  n_pseudo_experiments: 1000
+    - name: hmass
+      min: 550.0
+      max: 1100.0
+      n_points: 50
+  n_pseudo_experiments: 10000
   pseudo_experiment_confidence: 0.95
 
 input_plots:
