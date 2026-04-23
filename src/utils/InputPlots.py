@@ -10,8 +10,11 @@ from omegaconf import DictConfig
 from src.data.DataHelpers import (
     build_indices_per_parameter_point,
     build_label_skip_mask,
+    build_parameter_label_map,
+    build_parameter_units_map,
     get_unique_parameter_points,
     normalize_feature_specs,
+    parameter_point_label,
     parameter_name_from_spec,
     parse_feature_spec,
 )
@@ -36,6 +39,7 @@ def _compare_distributions(
     font_size: int = 16,
     parameter_display_names: list[str] | None = None,
     label_skip_mask: list[bool] | None = None,
+    parameter_units: list[str | None] | None = None,
 ):
     """Draw overlaid histograms of *variable* for each parameter point."""
     if parameter_display_names is None:
@@ -44,9 +48,11 @@ def _compare_distributions(
     fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
 
     for point, indices in indices_per_point.items():
-        label = ", ".join(
-            f"{display}={value:g}" for i, (display, value) in enumerate(zip(parameter_display_names, point))
-            if label_skip_mask is None or not label_skip_mask[i]
+        label = parameter_point_label(
+            parameter_display_names,
+            point,
+            skip_mask=label_skip_mask,
+            parameter_units=parameter_units,
         )
         data = variable[indices]
         w = weights[indices] if use_weights else None
@@ -97,6 +103,7 @@ def _signal_plus_background_distributions(
     font_size: int = 16,
     parameter_display_names: list[str] | None = None,
     label_skip_mask: list[bool] | None = None,
+    parameter_units: list[str | None] | None = None,
 ):
     """For each signal parameter point, plot signal+BG combined as density."""
     if parameter_display_names is None:
@@ -126,9 +133,11 @@ def _signal_plus_background_distributions(
     )
 
     for point, sig_idx in signal_point_indices.items():
-        point_label = ", ".join(
-            f"{display}={value:g}" for i, (display, value) in enumerate(zip(parameter_display_names, point))
-            if label_skip_mask is None or not label_skip_mask[i]
+        point_label = parameter_point_label(
+            parameter_display_names,
+            point,
+            skip_mask=label_skip_mask,
+            parameter_units=parameter_units,
         )
         sig_w = weights[sig_idx] if use_weights else None
         sig_counts, _ = np.histogram(
@@ -211,7 +220,10 @@ def run_input_plots(cfg: DictConfig) -> None:
     variable_x_labels: dict[str, str] = {}
     for var in cfg.input_plots.variables:
         variable_x_labels[var["name"]] = var.get("x_label", var["name"])
-    parameter_display_names = [variable_x_labels.get(n, n) for n in parameter_names]
+    parameter_base_labels = build_parameter_label_map(parameter_specs, variable_x_labels, include_units=False)
+    parameter_display_names = [parameter_base_labels.get(n, n) for n in parameter_names]
+    parameter_units_map = build_parameter_units_map(parameter_specs)
+    parameter_units = [parameter_units_map.get(n) for n in parameter_names]
 
     # Build the variable list to plot from the config.
     plot_vars = list(cfg.input_plots.variables)
@@ -279,6 +291,7 @@ def run_input_plots(cfg: DictConfig) -> None:
                 font_size=font_size,
                 parameter_display_names=parameter_display_names,
                 label_skip_mask=label_skip_mask,
+                parameter_units=parameter_units,
             )
 
             if signal_plus_bg and use_weights:
@@ -300,6 +313,7 @@ def run_input_plots(cfg: DictConfig) -> None:
                     font_size=font_size,
                     parameter_display_names=parameter_display_names,
                     label_skip_mask=label_skip_mask,
+                    parameter_units=parameter_units,
                 )
 
     logger.info("All input plots saved to %s", output_dir)

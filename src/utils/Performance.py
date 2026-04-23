@@ -8,7 +8,7 @@ from omegaconf import DictConfig
 from sklearn.metrics import auc, roc_curve
 from torch.utils.data import DataLoader
 
-from src.data.DataHelpers import build_label_skip_mask, normalize_feature_specs, parameter_point_label, parameter_point_slug
+from src.data.DataHelpers import build_label_skip_mask, build_parameter_label_map, build_parameter_units_map, normalize_feature_specs, parameter_point_label, parameter_point_slug
 from src.utils.utils import (
     ensure_parent_dir,
     get_latest_checkpoint_path,
@@ -23,7 +23,11 @@ def _build_parameter_x_labels(cfg: DictConfig) -> dict[str, str]:
     variables = getattr(cfg, "input_plots", {}).get("variables", [])
     for var in variables:
         mapping[var["name"]] = var.get("x_label", var["name"])
-    return mapping
+    return build_parameter_label_map(normalize_feature_specs(cfg.dataset.parameters), mapping, include_units=False)
+
+
+def _build_parameter_units(cfg: DictConfig) -> dict[str, str | None]:
+    return build_parameter_units_map(normalize_feature_specs(cfg.dataset.parameters))
 
 
 def _category_to_parameter_map(parameters_category_dict: dict[tuple[float, ...], int]) -> dict[int, tuple[float, ...]]:
@@ -35,6 +39,7 @@ def _category_label(
     parameter_names: list[str],
     category: int,
     parameter_x_labels: dict[str, str] | None = None,
+    parameter_units: dict[str, str | None] | None = None,
     label_skip_mask: list[bool] | None = None,
 ) -> str:
     parameter_point = category_to_parameter.get(category)
@@ -42,8 +47,10 @@ def _category_label(
         return f"category={category}"
     if parameter_x_labels:
         display_names = [parameter_x_labels.get(n, n) for n in parameter_names]
-        return parameter_point_label(display_names, parameter_point, skip_mask=label_skip_mask)
-    return parameter_point_label(parameter_names, parameter_point, skip_mask=label_skip_mask)
+        units = None if parameter_units is None else [parameter_units.get(n) for n in parameter_names]
+        return parameter_point_label(display_names, parameter_point, skip_mask=label_skip_mask, parameter_units=units)
+    units = None if parameter_units is None else [parameter_units.get(n) for n in parameter_names]
+    return parameter_point_label(parameter_names, parameter_point, skip_mask=label_skip_mask, parameter_units=units)
 
 
 def _category_slug(category_to_parameter: dict[int, tuple[float, ...]], parameter_names: list[str], category: int, label_skip_mask: list[bool] | None = None) -> str:
@@ -84,6 +91,7 @@ def _plot_score_distributions(
     split_name: str,
     output_dir: Path,
     parameter_x_labels: dict[str, str] | None = None,
+    parameter_units: dict[str, str | None] | None = None,
     font_size: int = 14,
     label_skip_mask: list[bool] | None = None,
 ) -> None:
@@ -112,7 +120,7 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, label_skip_mask)
+        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, parameter_units, label_skip_mask)
         plt.hist(signal_scores, bins=20, histtype="step", density=True, range=(0.0, 1.0))
         legend_labels.append(f"S {label}")
 
@@ -133,7 +141,7 @@ def _plot_score_distributions(
         if signal_scores.size == 0:
             continue
 
-        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, label_skip_mask)
+        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, parameter_units, label_skip_mask)
         slug = _category_slug(category_to_parameter, parameter_names, category, label_skip_mask)
         plt.figure(figsize=(8, 5))
         plt.hist(
@@ -166,6 +174,7 @@ def _plot_roc_curves(
     split_name: str,
     output_dir: Path,
     parameter_x_labels: dict[str, str] | None = None,
+    parameter_units: dict[str, str | None] | None = None,
     font_size: int = 14,
     label_skip_mask: list[bool] | None = None,
 ) -> None:
@@ -197,7 +206,7 @@ def _plot_roc_curves(
 
         fpr, tpr, _ = roc_curve(selected_labels, selected_scores)
         roc_auc = auc(fpr, tpr)
-        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, label_skip_mask)
+        label = _category_label(category_to_parameter, parameter_names, category, parameter_x_labels, parameter_units, label_skip_mask)
         slug = _category_slug(category_to_parameter, parameter_names, category, label_skip_mask)
 
         plt.plot(fpr, tpr, lw=2, label=f"AUC = {roc_auc:.3f} -- {label}")
@@ -243,6 +252,7 @@ def _run_plots_for_split(
     output_dir: Path,
     batch_size: int,
     parameter_x_labels: dict[str, str] | None = None,
+    parameter_units: dict[str, str | None] | None = None,
     font_size: int = 14,
     label_skip_mask: list[bool] | None = None,
 ) -> None:
@@ -267,6 +277,7 @@ def _run_plots_for_split(
         split_name=split_name,
         output_dir=split_output_dir,
         parameter_x_labels=parameter_x_labels,
+        parameter_units=parameter_units,
         font_size=font_size,
         label_skip_mask=label_skip_mask,
     )
@@ -279,6 +290,7 @@ def _run_plots_for_split(
         split_name=split_name,
         output_dir=split_output_dir,
         parameter_x_labels=parameter_x_labels,
+        parameter_units=parameter_units,
         font_size=font_size,
         label_skip_mask=label_skip_mask,
     )
@@ -303,7 +315,8 @@ def testing(datamodule, model_class, cfg: DictConfig) -> None:
 
     category_to_parameter = _category_to_parameter_map(datamodule.parameters_category_dict)
     parameter_x_labels = _build_parameter_x_labels(cfg)
+    parameter_units = _build_parameter_units(cfg)
     font_size = int(getattr(cfg.input_plots, "font_size", 14))
     label_skip_mask = build_label_skip_mask(normalize_feature_specs(cfg.dataset.parameters))
-    _run_plots_for_split(trainer, model, datamodule, "test", category_to_parameter, output_dir, batch_size, parameter_x_labels, font_size, label_skip_mask)
-    _run_plots_for_split(trainer, model, datamodule, "holdout", category_to_parameter, output_dir, batch_size, parameter_x_labels, font_size, label_skip_mask)
+    _run_plots_for_split(trainer, model, datamodule, "test", category_to_parameter, output_dir, batch_size, parameter_x_labels, parameter_units, font_size, label_skip_mask)
+    _run_plots_for_split(trainer, model, datamodule, "holdout", category_to_parameter, output_dir, batch_size, parameter_x_labels, parameter_units, font_size, label_skip_mask)

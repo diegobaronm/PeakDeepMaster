@@ -49,12 +49,12 @@ PLOT_MAP: dict[str, str] = {
     "inference/mass_650_256_correct_split/chi2_scan.pdf":                 "ForPaper/1D_mass_650/chi2_scan.pdf",
     "inference/mass_650_256_correct_split/hypothesis_shape.pdf":          "ForPaper/1D_mass_650/hypothesis_shape.pdf",
     "inference/mass_650_256_zoom_correct_split/inference_review.pdf":          "ForPaper/1D_mass_650/inference_review.pdf",
-    "inference/mass_650_256_zoom_correct_split/pseudo_experiment_$m(S)$.pdf": "ForPaper/1D_mass_650/pseudo_experiment_mass.pdf",
+    "inference/mass_650_256_zoom_correct_split/pseudo_experiment_$m_S$.pdf": "ForPaper/1D_mass_650/pseudo_experiment_mass.pdf",
     # 870
     "inference/mass_870_256_correct_split/chi2_scan.pdf":                 "ForPaper/1D_mass_870/chi2_scan.pdf",
     "inference/mass_870_256_correct_split/hypothesis_shape.pdf":          "ForPaper/1D_mass_870/hypothesis_shape.pdf",
     "inference/mass_870_256_zoom_correct_split/inference_review.pdf":          "ForPaper/1D_mass_870/inference_review.pdf",
-    "inference/mass_870_256_zoom_correct_split/pseudo_experiment_$m(S)$.pdf": "ForPaper/1D_mass_870/pseudo_experiment_mass.pdf",
+    "inference/mass_870_256_zoom_correct_split/pseudo_experiment_$m_S$.pdf": "ForPaper/1D_mass_870/pseudo_experiment_mass.pdf",
 
 
     # ── Inference: 2D coupling×mass  ────────────────────────────
@@ -63,25 +63,25 @@ PLOT_MAP: dict[str, str] = {
     "inference/coupling_0p5_hmass_650_correct_split/hypothesis_shape.pdf":          "ForPaper/2D_0p5_650/hypothesis_shape.pdf",
     "inference/coupling_0p5_hmass_650_zoom_correct_split/inference_review.pdf":          "ForPaper/2D_0p5_650/inference_review.pdf",
     "inference/coupling_0p5_hmass_650_zoom_correct_split/pseudo_experiment_$C_e$.pdf": "ForPaper/2D_0p5_650/pseudo_experiment_coupling.pdf",
-    "inference/coupling_0p5_hmass_650_zoom_correct_split/pseudo_experiment_$m(S)$.pdf": "ForPaper/2D_0p5_650/pseudo_experiment_mass.pdf",
+    "inference/coupling_0p5_hmass_650_zoom_correct_split/pseudo_experiment_$m_S$.pdf": "ForPaper/2D_0p5_650/pseudo_experiment_mass.pdf",
     # 0.5 - 870
     "inference/coupling_0p5_hmass_870_correct_split/chi2_scan_heatmap.pdf":                 "ForPaper/2D_0p5_870/chi2_scan_heatmap.pdf",
     "inference/coupling_0p5_hmass_870_correct_split/hypothesis_shape.pdf":          "ForPaper/2D_0p5_870/hypothesis_shape.pdf",
     "inference/coupling_0p5_hmass_870_zoom_correct_split/inference_review.pdf":          "ForPaper/2D_0p5_870/inference_review.pdf",
     "inference/coupling_0p5_hmass_870_zoom_correct_split/pseudo_experiment_$C_e$.pdf": "ForPaper/2D_0p5_870/pseudo_experiment_coupling.pdf",
-    "inference/coupling_0p5_hmass_870_zoom_correct_split/pseudo_experiment_$m(S)$.pdf": "ForPaper/2D_0p5_870/pseudo_experiment_mass.pdf",
+    "inference/coupling_0p5_hmass_870_zoom_correct_split/pseudo_experiment_$m_S$.pdf": "ForPaper/2D_0p5_870/pseudo_experiment_mass.pdf",
     # 1.1 - 650
     "inference/coupling_1p1_hmass_650_correct_split/chi2_scan_heatmap.pdf":                 "ForPaper/2D_1p1_650/chi2_scan_heatmap.pdf",
     "inference/coupling_1p1_hmass_650_correct_split/hypothesis_shape.pdf":          "ForPaper/2D_1p1_650/hypothesis_shape.pdf",
     "inference/coupling_1p1_hmass_650_zoom_correct_split/inference_review.pdf":          "ForPaper/2D_1p1_650/inference_review.pdf",
     "inference/coupling_1p1_hmass_650_zoom_correct_split/pseudo_experiment_$C_e$.pdf": "ForPaper/2D_1p1_650/pseudo_experiment_coupling.pdf",
-    "inference/coupling_1p1_hmass_650_zoom_correct_split/pseudo_experiment_$m(S)$.pdf": "ForPaper/2D_1p1_650/pseudo_experiment_mass.pdf",
+    "inference/coupling_1p1_hmass_650_zoom_correct_split/pseudo_experiment_$m_S$.pdf": "ForPaper/2D_1p1_650/pseudo_experiment_mass.pdf",
     # 1.1 - 870
     "inference/coupling_1p1_hmass_870_correct_split/chi2_scan_heatmap.pdf":                 "ForPaper/2D_1p1_870/chi2_scan_heatmap.pdf",
     "inference/coupling_1p1_hmass_870_correct_split/hypothesis_shape.pdf":          "ForPaper/2D_1p1_870/hypothesis_shape.pdf",
     "inference/coupling_1p1_hmass_870_zoom_correct_split/inference_review.pdf":          "ForPaper/2D_1p1_870/inference_review.pdf",
     "inference/coupling_1p1_hmass_870_zoom_correct_split/pseudo_experiment_$C_e$.pdf": "ForPaper/2D_1p1_870/pseudo_experiment_coupling.pdf",
-    "inference/coupling_1p1_hmass_870_zoom_correct_split/pseudo_experiment_$m(S)$.pdf": "ForPaper/2D_1p1_870/pseudo_experiment_mass.pdf",
+    "inference/coupling_1p1_hmass_870_zoom_correct_split/pseudo_experiment_$m_S$.pdf": "ForPaper/2D_1p1_870/pseudo_experiment_mass.pdf",
 
     # ── Inference: width robustness studies (holdout width ≠ training)
     # Natural width

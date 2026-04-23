@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from omegaconf import DictConfig
 
-from src.data.DataHelpers import build_label_skip_mask, feature_key, is_split_only, normalize_feature_specs, parameter_point_label, parse_feature_spec
+from src.data.DataHelpers import build_label_skip_mask, build_parameter_label_map, build_parameter_units_map, feature_key, is_split_only, normalize_feature_specs, parameter_point_label, parse_feature_spec
 from src.utils.PseudoExperiments import PseudoExperimentEstimator
 from src.utils.utils import get_latest_checkpoint_path, load_checkpoint_into_model, resolve_runtime_path
 
@@ -270,9 +270,14 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         for var in cfg.input_plots.variables:
             variable_x_labels[var["name"]] = var.get("x_label", var["name"])
     observable_label = variable_x_labels.get(observable, f"{observable} [GeV]")
-    parameter_display_names = [variable_x_labels.get(n, n) for n in datamodule.model_parameter_names]
     font_size = int(getattr(cfg.input_plots, "font_size", 14)) if hasattr(cfg, "input_plots") else 14
     model_parameter_specs = [spec for spec in normalize_feature_specs(cfg.dataset.parameters) if not is_split_only(spec)]
+    parameter_base_labels = build_parameter_label_map(model_parameter_specs, variable_x_labels, include_units=False)
+    parameter_axis_labels = build_parameter_label_map(model_parameter_specs, variable_x_labels)
+    parameter_display_names = [parameter_base_labels.get(n, n) for n in datamodule.model_parameter_names]
+    parameter_axis_display_names = [parameter_axis_labels.get(n, n) for n in datamodule.model_parameter_names]
+    parameter_units_map = build_parameter_units_map(model_parameter_specs)
+    parameter_units = [parameter_units_map.get(n) for n in datamodule.model_parameter_names]
     label_skip_mask = build_label_skip_mask(model_parameter_specs)
 
     model_pp = model_class(cfg)
@@ -410,7 +415,12 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             hypothesis_shape=hypothesis_shape,
             rosmm_sign=rosmm_sign,
         )
-        theta_label = parameter_point_label(parameter_display_names, theta_point, skip_mask=label_skip_mask)
+        theta_label = parameter_point_label(
+            parameter_display_names,
+            theta_point,
+            skip_mask=label_skip_mask,
+            parameter_units=parameter_units,
+        )
         if len(datamodule.model_parameter_names) == 1:
             inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable_label, theta_label, output_dir, counter, font_size)
         if pe_estimator is not None:
@@ -431,22 +441,25 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
 
     if len(datamodule.model_parameter_names) == 1:
         logger.info("Generating chi2 plot...")
-        chi2_plot(theta_axes[0], chi2_values_array, parameter_display_names[0], truth_point, output_dir, font_size)
+        chi2_plot(theta_axes[0], chi2_values_array, parameter_axis_display_names[0], truth_point, output_dir, font_size)
     elif len(datamodule.model_parameter_names) == 2:
         logger.info("Generating chi2 heatmap...")
-        chi2_heatmap_plot(theta_axes, chi2_values_array, parameter_display_names, truth_point, output_dir, font_size)
+        chi2_heatmap_plot(theta_axes, chi2_values_array, parameter_axis_display_names, truth_point, output_dir, font_size)
 
     if pe_estimator is not None:
         logger.info("Running pseudo-experiment uncertainty estimation...")
         pe_estimator.find_best_fits()
         pe_estimator.save(output_dir, datamodule.model_parameter_names)
         pe_estimator.plot(
-            parameter_names=parameter_display_names,
+            parameter_axis_labels=parameter_axis_display_names,
             truth_point=truth_point,
             nominal_best_fit=best_theta,
             output_dir=output_dir,
             confidence=pe_confidence,
             font_size=font_size,
+            parameter_display_names=parameter_display_names,
+            parameter_units=parameter_units,
+            output_file_names=parameter_display_names,
         )
 
     logger.info("Generating review plot...")
@@ -485,8 +498,8 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         hypothesis_sigma,
         best_infer_shape,
         truth_infer_shape,
-        parameter_point_label(parameter_display_names, best_theta, skip_mask=label_skip_mask),
-        parameter_point_label(parameter_display_names, truth_point, skip_mask=label_skip_mask),
+        parameter_point_label(parameter_display_names, best_theta, skip_mask=label_skip_mask, parameter_units=parameter_units),
+        parameter_point_label(parameter_display_names, truth_point, skip_mask=label_skip_mask, parameter_units=parameter_units),
         observable_label,
         output_dir,
         font_size,

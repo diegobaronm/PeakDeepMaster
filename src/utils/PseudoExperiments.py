@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from src.data.DataHelpers import parameter_point_label
+
 logger = logging.getLogger(__name__)
 
 
@@ -143,12 +145,15 @@ class PseudoExperimentEstimator:
 
     def plot(
         self,
-        parameter_names: list[str],
+        parameter_axis_labels: list[str],
         truth_point: tuple[float, ...],
         nominal_best_fit: tuple[float, ...],
         output_dir: Path,
         confidence: float = 0.95,
         font_size: int = 14,
+        parameter_display_names: list[str] | None = None,
+        parameter_units: list[str | None] | None = None,
+        output_file_names: list[str] | None = None,
     ) -> None:
         """Plot histogram of best-fit parameters with uncertainty bands."""
         output_dir = Path(output_dir)
@@ -156,36 +161,46 @@ class PseudoExperimentEstimator:
         if params.ndim == 1:
             params = params.reshape(-1, 1)
 
+        if parameter_display_names is None:
+            parameter_display_names = parameter_axis_labels
+        if output_file_names is None:
+            output_file_names = parameter_display_names
+
         uncertainties = self.estimate_uncertainty(confidence)
 
-        for dim, name in enumerate(parameter_names):
+        for dim, axis_label in enumerate(parameter_axis_labels):
             col = params[:, dim]
             info = uncertainties[dim]
+            display_name = parameter_display_names[dim]
+            output_file_name = output_file_names[dim]
+            units = None if parameter_units is None else [parameter_units[dim]]
+            truth_label = parameter_point_label([display_name], (truth_point[dim],), parameter_units=units)
+            nominal_label = parameter_point_label([display_name], (nominal_best_fit[dim],), parameter_units=units)
 
             fig, ax = plt.subplots(figsize=(8, 5))
             ax.hist(col, bins=50, edgecolor="black", alpha=0.7, label="Pseudo-experiments")
             ax.axvline(
                 truth_point[dim], color="green", linestyle="--", linewidth=1.5,
-                label=f"Truth = {truth_point[dim]:.4g}",
+                label=f"Truth ({truth_label})",
             )
             ax.axvline(
                 nominal_best_fit[dim], color="red", linestyle="-", linewidth=1.5,
-                label=f"Nominal best fit = {nominal_best_fit[dim]:.4g}",
+                label=f"Nominal best fit ({nominal_label})",
             )
             ax.axvspan(
                 info["lower"], info["upper"], alpha=0.2, color="blue",
-                label=f"{confidence:.0%} CI: [{info['lower']:.4g}, {info['upper']:.4g}]",
+                label=f"{confidence:.0%} CI",
             )
 
-            ax.set_xlabel(name, fontsize=font_size)
+            ax.set_xlabel(axis_label, fontsize=font_size)
             ax.set_ylabel("Pseudo-experiments", fontsize=font_size)
             ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=2, fontsize=font_size)
 
             fig.tight_layout()
-            fig.savefig(output_dir / f"pseudo_experiment_{name}.pdf", dpi=150, bbox_inches="tight")
+            fig.savefig(output_dir / f"pseudo_experiment_{output_file_name}.pdf", dpi=150, bbox_inches="tight")
             plt.close(fig)
 
             logger.info(
                 "Parameter '%s': %s CI = [%.4g, %.4g], median = %.4g",
-                name, f"{confidence:.0%}", info["lower"], info["upper"], info["median"],
+                axis_label, f"{confidence:.0%}", info["lower"], info["upper"], info["median"],
             )

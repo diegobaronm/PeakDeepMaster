@@ -32,6 +32,7 @@ dataset:
       transformation: StandardScaler
   parameters:
     - EVENT_GLOBAL: hmass
+      units: GeV
       transformation: MinMaxScaler
       values_for_training: [600.0, 700.0, 800.0, 900.0, 1000.0]
       values_for_testing: [650.0, 870.0]
@@ -55,7 +56,7 @@ train:
   weight_decay: 0.001
   lr_patience: 10
   lr_factor: 0.8
-  signal_weight_sign: negative
+  signal_weight_sign: positive
   background_weight_sign: positive
   compile: false
 
@@ -64,19 +65,19 @@ predict:
   output_file: results/predictions.csv
 
 performance:
-  checkpoint_path: training_logs/1D_mass_PN_256_correct_split/version_0/checkpoints/
-  output_dir: results/performance/1D_mass_PN_256_correct_split/
+  checkpoint_path: training_logs/1D_mass_PP_256_correct_split/version_0/checkpoints/
+  output_dir: results/performance/1D_mass_PP_256_correct_split/
   batch_size: 10240
 
 inference:
-  output_dir: results/inference/mass_650_256_zoom_correct_split/
+  output_dir: results/inference/mass_870_256_zoom_correct_split/
   model_pp_checkpoint: training_logs/1D_mass_PP_256_correct_split/version_0/checkpoints/
   model_pn_checkpoint: training_logs/1D_mass_PN_256_correct_split/version_0/checkpoints/
   observable: mttbar
   rosmm_sign: -1.0
-  truth_parameter: 650.0
-  theta_min: 648.7 # 550 min
-  theta_max: 650.0 # 1100 max
+  truth_parameter: 870.0
+  theta_min: 870.3 # 550 min
+  theta_max: 871.0 # 1100 max
   n_points: 100
   n_pseudo_experiments: 10000
   pseudo_experiment_confidence: 0.95
@@ -129,7 +130,7 @@ input_plots:
       display_name: "hmass [GeV]"
       x_min: 500
       x_max: 1100
-      x_label: "$m(S)$"
+      x_label: "$m_S$"
       y_label: "Density"
     - group: EVENT_GLOBAL
       name: lumiWeight

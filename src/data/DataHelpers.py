@@ -19,7 +19,7 @@ def normalize_parameter_point(values) -> tuple[float, ...]:
 
 def parse_feature_spec(spec: dict) -> tuple[str, str]:
     ignored_keys = {"transformation", "values_for_training", "values_for_testing", "split_only",
-                    "add_to_holdout", "remove_from_holdout", "skip_label_in_plots"}
+                    "add_to_holdout", "remove_from_holdout", "skip_label_in_plots", "units"}
     for key, value in spec.items():
         if key in ignored_keys:
             continue
@@ -44,6 +44,42 @@ def feature_key(group_name: str, variable_name: str) -> str:
 def parameter_name_from_spec(spec: dict) -> str:
     _, variable_name = parse_feature_spec(spec)
     return variable_name
+
+
+def normalize_units(units: str | None) -> str | None:
+    if units is None:
+        return None
+    normalized_units = str(units).strip()
+    if not normalized_units or normalized_units.lower() in {"none", "null"}:
+        return None
+    return normalized_units
+
+
+def append_units_to_label(label: str, units: str | None) -> str:
+    normalized_units = normalize_units(units)
+    if normalized_units is None or f"[{normalized_units}]" in label:
+        return label
+    return f"{label} [{normalized_units}]"
+
+
+def build_parameter_label_map(
+    parameter_specs: list[dict],
+    base_labels_by_name: dict[str, str] | None = None,
+    include_units: bool = True,
+) -> dict[str, str]:
+    label_map = {} if base_labels_by_name is None else dict(base_labels_by_name)
+    for spec in parameter_specs:
+        parameter_name = parameter_name_from_spec(spec)
+        base_label = label_map.get(parameter_name, parameter_name)
+        label_map[parameter_name] = append_units_to_label(base_label, spec.get("units")) if include_units else base_label
+    return label_map
+
+
+def build_parameter_units_map(parameter_specs: list[dict]) -> dict[str, str | None]:
+    return {
+        parameter_name_from_spec(spec): normalize_units(spec.get("units"))
+        for spec in parameter_specs
+    }
 
 def get_feature_from_h5(data_file: h5py.File, group_name: str, variable_name: str) -> np.ndarray:
     return data_file["INPUTS"][group_name][variable_name][:]
@@ -255,18 +291,31 @@ def holdout_mask_from_parameter_matrix(
     return holdout_mask
 
 
-def parameter_point_label(parameter_names: list[str], point: tuple[float, ...], skip_mask: list[bool] | None = None) -> str:
+def parameter_point_label(
+    parameter_names: list[str],
+    point: tuple[float, ...],
+    skip_mask: list[bool] | None = None,
+    parameter_units: list[str | None] | None = None,
+) -> str:
     normalized_point = normalize_parameter_point(point)
     pairs = [
-        (name, value)
+        (name, value, None if parameter_units is None else parameter_units[i])
         for i, (name, value) in enumerate(zip(parameter_names, normalized_point))
         if skip_mask is None or not skip_mask[i]
     ]
     if not pairs:
-        pairs = list(zip(parameter_names, normalized_point))
-    if len(pairs) == 1:
-        return f"{pairs[0][0]}={pairs[0][1]:g}"
-    return ", ".join(f"{name}={value:g}" for name, value in pairs)
+        pairs = [
+            (name, value, None if parameter_units is None else parameter_units[i])
+            for i, (name, value) in enumerate(zip(parameter_names, normalized_point))
+        ]
+
+    def _format_parameter_value(name: str, value: float, units: str | None) -> str:
+        normalized_units = normalize_units(units)
+        if normalized_units is None:
+            return f"{name} = {value:g}"
+        return f"{name} = {value:g} {normalized_units}"
+
+    return ", ".join(_format_parameter_value(name, value, units) for name, value, units in pairs)
 
 
 def parameter_point_slug(parameter_names: list[str], point: tuple[float, ...], skip_mask: list[bool] | None = None) -> str:
