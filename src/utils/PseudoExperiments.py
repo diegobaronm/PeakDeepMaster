@@ -23,10 +23,14 @@ class PseudoExperimentEstimator:
         hypothesis_sigma: np.ndarray,
         n_pseudo: int = 1000,
         random_seed: int = 42,
+        strategy: str = "gaussian",
     ):
         self.hypothesis_shape = hypothesis_shape
         self.hypothesis_sigma = hypothesis_sigma
         self.n_pseudo = n_pseudo
+        self.strategy = strategy.lower()
+        if self.strategy not in {"gaussian", "poisson"}:
+            raise ValueError(f"Unknown pseudo-experiment strategy: {strategy}")
         self.rng = np.random.default_rng(random_seed)
 
         self.pseudo_experiments: np.ndarray | None = None
@@ -37,8 +41,21 @@ class PseudoExperimentEstimator:
         self.best_fit_chi2s: list[float] = []
 
     def generate(self) -> np.ndarray:
-        """Generate pseudo-experiments by Gaussian-fluctuating the hypothesis."""
+        """Generate pseudo-experiments by fluctuating the hypothesis histogram."""
         n_bins = len(self.hypothesis_shape)
+        if self.strategy == "poisson":
+            if not np.all(np.isfinite(self.hypothesis_shape)):
+                raise ValueError("Poisson pseudo-experiments require finite bin contents.")
+            counts = self.rng.poisson(
+                np.abs(self.hypothesis_shape), size=(self.n_pseudo, n_bins)
+            )
+            self.pseudo_experiments = counts * np.sign(self.hypothesis_shape)
+            logger.info(
+                "Generated %d Poisson pseudo-experiments with %d bins each.",
+                self.n_pseudo, n_bins,
+            )
+            return self.pseudo_experiments
+
         self.pseudo_experiments = np.empty((self.n_pseudo, n_bins))
         for i in range(self.n_pseudo):
             self.pseudo_experiments[i] = self.rng.normal(
@@ -73,6 +90,10 @@ class PseudoExperimentEstimator:
         self.best_fit_chi2s = []
 
         for pseudo in self.pseudo_experiments:
+            if self.strategy == "poisson":
+                total = np.abs(pseudo).sum()
+                if total > 0:
+                    pseudo = pseudo / total
             diff = pseudo[np.newaxis, :] - scan_matrix
             chi2_per_point = np.sum(diff ** 2, axis=1)
             best_idx = int(np.argmin(chi2_per_point))

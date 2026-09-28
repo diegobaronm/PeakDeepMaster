@@ -23,6 +23,8 @@ dependencies = [
   "torchvision",
   "torchaudio",
   "lightning>=2.5.0,<2.6.0",
+  "optuna",
+  "optuna-integration[pytorch_lightning]",
 ]
 
 [tool.setuptools.packages.find]

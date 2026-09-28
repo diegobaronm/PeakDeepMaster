@@ -22,6 +22,7 @@ python PeakDeepMaster.py --config-name config_1D_coupling general.mode=predict
 python PeakDeepMaster.py --config-name config_1D_coupling general.mode=performance
 python PeakDeepMaster.py --config-name config_1D_coupling general.mode=inference
 python PeakDeepMaster.py --config-name config_1D_coupling general.mode=input_plots
+python PeakDeepMaster.py --config-name config_1D_coupling general.mode=optimise
 
 python PeakDeepMaster.py --config-name config_1D_mass general.mode=train
 python PeakDeepMaster.py --config-name config_2D general.mode=train
@@ -37,6 +38,7 @@ python PeakDeepMaster.py --config-name config_2D_width general.mode=train
 | `performance` | Evaluate test and holdout splits, producing ROC curves, score distributions, and summary CSVs. |
 | `inference`   | Scan over parameter values using the RoSMM method and compute an $L^2$ statistic to find the best-fit parameter(s). |
 | `input_plots` | Generate per-parameter-point distribution plots for all variables listed in `input_plots.variables`. Reads directly from the H5 file (no model needed). |
+| `optimise`     | Run Optuna hyperparameter optimisation using the `optimise` configuration block. |
 
 ## Project Structure
 
@@ -190,14 +192,28 @@ Processing large H5 files is expensive. The `dataset.cache` block lets you pickl
 ```yaml
 dataset:
   cache:
-    save_path: /data/pickled/my_dataset.pkl   # Write cache here after processing
-    load_path: /data/pickled/my_dataset.pkl   # Load cache from here if it exists
+    save_path: /data/pickled/my_dataset.pkl   # Base path for the cache family
+    load_path: /data/pickled/my_dataset.pkl   # Base path for loading a family member
 ```
+
+Processing writes five independent cache files from the base path: four sign-specific training caches and one unfiltered inference cache:
+
+```text
+/data/pickled/my_dataset_SP_BGP.pkl
+/data/pickled/my_dataset_SP_BGN.pkl
+/data/pickled/my_dataset_SN_BGP.pkl
+/data/pickled/my_dataset_SN_BGN.pkl
+/data/pickled/my_dataset_Inference.pkl
+```
+
+The first four files are sign-filtered training caches: `SP`/`SN` select positive/negative signal weights, and `BGP`/`BGN` select positive/negative background weights. `_Inference.pkl` contains the unfiltered datasets with both weight signs. Non-inference stages select one of the first four files from `train.signal_weight_sign` and `train.background_weight_sign`; inference loads `_Inference.pkl`. Existing paths that already end in one of these variant suffixes are normalized to the same cache-family base.
+
+`save_path` writes all five files after source processing. `load_path` is interpreted as the cache-family base path, with the appropriate file selected from the setup stage.
 
 | Key         | Description |
 |-------------|-------------|
-| `save_path` | Path to write the pickle cache after data processing. Created if absent. |
-| `load_path` | Path to read a previously saved cache. If the file exists, all data processing is skipped. |
+| `save_path` | Base path for the four sign-specific training caches plus the unfiltered `_Inference.pkl` cache. Parent directories are created if absent. |
+| `load_path` | Base path for the cache family. Non-inference stages load the sign variant matching the configured signs; inference loads `_Inference.pkl`. |
 
 Both keys are optional and independent. A typical workflow is to set `save_path` on the first run, then switch to `load_path` for subsequent runs.
 
@@ -285,6 +301,39 @@ Used when `general.mode=inference`. This implements the RoSMM inference procedur
 5. For each scan point $\theta$, the reference sample is reweighted using the RoSMM formula: $\text{RoSMM}(\theta) = r_{PP}(\theta) \cdot \frac{c_1}{c_0} + r_{PN}(\theta) \cdot \frac{1 - c_1}{c_0}$
 6. The reweighted distribution is compared to the hypothesis via an $L^2$ statistic.
 7. The parameter(s) minimising the $L^2$ are reported as the best fit.
+
+#### Inference pipeline
+
+```mermaid
+flowchart TD
+  A([Inference mode]) --> B[Load unfiltered inference cache<br/>and prepare datamodule]
+  B --> C[Load positive-positive and<br/>positive-negative checkpoints]
+  C --> D[Identify observable and<br/>inverse its feature scaling]
+  D --> E[Select one augmented background<br/>parameter point from the test split]
+  E --> F[Select truth-point signal<br/>from the holdout split]
+  F --> G[Build normalised hypothesis histogram<br/>and statistical uncertainties]
+  G --> H[Build 1D or Cartesian multi-parameter<br/>scan grid]
+  H --> I[Estimate c0 and c1<br/>from signed training weights]
+  I --> J{Pseudo-experiments enabled?}
+  J -->|yes| K[Generate pseudo-experiment<br/>hypothesis histograms]
+  J -->|no| L[Use nominal hypothesis only]
+  K --> M[Scan every parameter point]
+  L --> M
+  M --> N[Scale theta and evaluate both models]
+  N --> O[Combine likelihood ratios with RoSMM<br/>and apply configured sign]
+  O --> P[Reweight reference background<br/>and build inferred histogram]
+  P --> Q[Compute L2 against hypothesis<br/>and record scan result]
+  Q --> R{More scan points?}
+  R -->|yes| M
+  R -->|no| S[Write chi2_scan.csv and<br/>scan visualisations]
+  S --> T[Choose minimum-L2 best-fit point]
+  T --> U{Pseudo-experiments enabled?}
+  U -->|yes| V[Find pseudo-experiment best fits,<br/>save tables and uncertainty plots]
+  U -->|no| W[Skip uncertainty estimation]
+  V --> X[Reweight at best-fit and truth points]
+  W --> X
+  X --> Y([Write inference review plot])
+```
 
 #### 1D inference settings
 
@@ -465,7 +514,7 @@ The remaining (non-holdout) data is split using `StratifiedShuffleSplit`:
 1. **80% train**, **20% temp** — stratified by the combined `[class, category]` label.
 2. The 20% temp is split **50/50** into validation and test — also stratified.
 
-This yields an **80/10/10** split. After splitting, background labels are reset to `[0, 0]` (category 0) since the augmented category assignments are no longer needed.
+This yields an **80/10/10** split. The augmented parameter-category assignments are retained for both signal and background events so optimisation can balance the joint signal/category strata.
 
 ### Step 9 — Weight-Sign Filtering
 
@@ -475,52 +524,57 @@ Each split (train, val, test) is filtered by `train.signal_weight_sign` and `tra
 - If `signal_weight_sign: negative`, only signal events with negative weights are kept.
 - Same logic for background events using `background_weight_sign`.
 
-This filtering is **skipped** for the holdout set and in `inference` mode (stage `"inference"`), where all events are kept regardless of weight sign.
+This filtering is applied to every dataset passed through `_to_dataset()` for non-`inference` stages, including the stored holdout dataset. It is skipped only in `inference` mode (stage `"inference"`), where all events are kept regardless of weight sign.
 
 ### Step 10 — Tensor Conversion
 
-The filtered NumPy arrays are converted to `torch.float32` `TensorDataset` objects ready for PyTorch `DataLoader`s.
+The resulting NumPy arrays are converted to `torch.float32` `TensorDataset` objects ready for PyTorch `DataLoader`s. For non-`inference` stages these arrays have already passed through the configured sign filter; inference keeps both signs.
 
 ### Summary Diagram
 
+```mermaid
+flowchart TD
+  A([DataModule.setup]) --> B{Usable cache exists?}
+
+  B -->|yes| C[Load pickled processed datasets<br/>scaler, metadata, train/val/test/holdout]
+  C --> D{setup stage = inference?}
+  D -->|yes| CA[Load unfiltered _Inference cache<br/>both weight signs]
+  D -->|no| CB[Select sign variant from<br/>signal/background sign flags]
+  CA --> CC[Apply optional balanced optimisation subset<br/>to train and validation]
+  CB --> CC
+  CC --> Z([DataLoaders])
+
+  B -->|no| F([H5 input])
+  F --> G[Read labels and configured observables, parameters, and weights]
+  G --> H[Cap events per parameter point<br/>max_events_per_parameter]
+  H --> I[Build X and y<br/>X = observables + parameters + weight<br/>y = class, category]
+
+  I --> J{general.mode = train?}
+  J -->|yes| K[Normalise weights<br/>per category and sign]
+  J -->|no| L[Keep weights as loaded]
+  K --> M[Augment background across<br/>all training parameter points]
+  L --> M
+
+  M --> N[Fit scaler and transform X<br/>optionally exclude scaling points]
+  N --> O[Separate signal holdout<br/>values_for_testing + add/remove overrides]
+  O --> P[Stratified split by<br/>class and parameter category]
+  P --> Q[80% train<br/>10% validation<br/>10% test]
+  Q --> R{stage = inference?}
+  R -->|yes| S[Create TensorDatasets via _to_dataset<br/>keep all event signs]
+  R -->|no| T[Create TensorDatasets via _to_dataset<br/>filter by configured signal/background weight sign]
+  S --> U[Save four sign-specific cache slices<br/>and one unfiltered _Inference cache]
+  T --> U
+  U --> V{optimise.data_percentage < 1?}
+  V -->|no| W[Use complete prepared datasets]
+  V -->|yes| X[Sample equal counts from every<br/>joint class/category stratum<br/>for train and validation]
+  W --> Z([DataLoaders])
+  X --> Z
+
+  S -.-> Y[(Holdout dataset<br/>not sign-filtered in inference mode)]
+  T -.-> Y2[(Holdout dataset<br/>filtered by the configured signs)]
 ```
-H5 file
-  │
-  ├─ Read LABELS/CLASS → labels (0/1)
-  ├─ Read INPUTS/<GROUP>/<var> for each observable, parameter, weight
-  │
-  ▼
-Subsample (max_events_per_parameter)
-  │
-  ▼
-Structure into X = [obs₁ … obsₙ | param₁ … paramₖ | weight]
-               y = [class, category]
-  │
-  ├─ [train mode] Normalise weights per category and sign
-  │
-  ▼
-Augment background across all training parameter points
-  │
-  ▼
-Fit scaler (optionally excluding remove_from_data_scaling points)
-Transform X
-  │
-  ▼
-Separate holdout (values_for_testing ± add/remove_from_holdout)
-  │
-  ├─ Holdout set → stored as-is (no sign filtering)
-  │
-  ▼
-StratifiedShuffleSplit → 80% train / 10% val / 10% test
-  │
-  ├─ Reset background categories to 0
-  │
-  ▼
-Filter by signal_weight_sign / background_weight_sign
-  │
-  ▼
-Convert to TensorDataset (torch.float32)
-```
+
+For optimisation, the final subset is balanced on the joint label `(y[:, 0], y[:, 1])`: each signal/background and parameter-category stratum contributes the same number of events. Background events retain the parameter categories assigned during augmentation. Four sign-specific training caches and one unfiltered inference cache are saved before this optimisation subset is applied. Cache hits select the sign variant for training or `_Inference.pkl` for inference.
 
 ---
 

@@ -7,7 +7,7 @@ import lightning as L
 import numpy as np
 import torch
 from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Subset, TensorDataset
 
 from src.data.DataHelpers import (
     augment_data_for_background,
@@ -45,6 +45,7 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         self.val_num_workers = cfg.dataset.val.num_workers
         self.train_batch_size = cfg.dataset.train.batch_size
         self.val_batch_size = cfg.dataset.val.batch_size
+        self.data_percentage = 1.0
 
         self.observables_config = normalize_feature_specs(cfg.dataset.observables)
         logger.debug("Observables configuration: %s", self.observables_config)
@@ -171,6 +172,131 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             setattr(self, attr, state[attr])
         logger.info("Loaded dataset cache from %s", cache_path)
 
+    @staticmethod
+    def _sign_code(sign: str) -> str:
+        normalized_sign = str(sign).lower()
+        if normalized_sign not in {"positive", "negative"}:
+            raise ValueError(f"Weight sign must be 'positive' or 'negative', got '{sign}'.")
+        return normalized_sign[0].upper()
+
+    @staticmethod
+    def _cache_base_path(path: str) -> str:
+        cache_path = Path(path)
+        suffixes = ("SP_BGP", "SP_BGN", "SN_BGP", "SN_BGN")
+        for variant_suffix in suffixes:
+            for separator in ("_", ""):
+                token = f"{separator}{variant_suffix}"
+                if cache_path.suffix and cache_path.stem.endswith(token):
+                    return str(cache_path.with_name(cache_path.stem[:-len(token)] + cache_path.suffix))
+                if not cache_path.suffix and str(cache_path).endswith(token):
+                    return str(cache_path)[:-len(token)]
+        return str(cache_path)
+
+    def _cache_variant_path(self, base_path: str, signal_sign: str, background_sign: str) -> str:
+        suffix = f"S{self._sign_code(signal_sign)}_BG{self._sign_code(background_sign)}"
+        base_path = self._cache_base_path(base_path)
+        cache_path = Path(base_path)
+        if cache_path.suffix:
+            return str(cache_path.with_name(f"{cache_path.stem}_{suffix}{cache_path.suffix}"))
+        return f"{base_path}{suffix}"
+
+    @classmethod
+    def _inference_cache_path(cls, base_path: str) -> str:
+        base_path = cls._cache_base_path(base_path)
+        cache_path = Path(base_path)
+        if cache_path.suffix:
+            return str(cache_path.with_name(f"{cache_path.stem}_Inference{cache_path.suffix}"))
+        return f"{base_path}_Inference.pkl"
+
+    def _filter_dataset_by_signs(
+        self,
+        dataset: TensorDataset,
+        signal_sign: str,
+        background_sign: str,
+    ) -> TensorDataset:
+        inputs, targets = dataset.tensors
+        mask = self._sign_mask(
+            inputs,
+            targets,
+            signal_weight_sign=signal_sign,
+            background_weight_sign=background_sign,
+        )
+        return TensorDataset(inputs[mask], targets[mask])
+
+    def _filter_datasets_by_signs(
+        self,
+        datasets: dict[str, TensorDataset],
+        signal_sign: str,
+        background_sign: str,
+    ) -> dict[str, TensorDataset]:
+        return {
+            dataset_name: self._filter_dataset_by_signs(dataset, signal_sign, background_sign)
+            for dataset_name, dataset in datasets.items()
+        }
+
+    def _save_sign_cache_family(
+        self,
+        base_path: str,
+        unfiltered_datasets: dict[str, TensorDataset],
+    ) -> None:
+        """Save one cache for each signal/background weight-sign combination."""
+        for signal_sign in ("positive", "negative"):
+            for background_sign in ("positive", "negative"):
+                filtered_datasets = self._filter_datasets_by_signs(
+                    unfiltered_datasets,
+                    signal_sign=signal_sign,
+                    background_sign=background_sign,
+                )
+                self.train_dataset = filtered_datasets["train_dataset"]
+                self.val_dataset = filtered_datasets["val_dataset"]
+                self.test_dataset = filtered_datasets["test_dataset"]
+                self.holdout_dataset = filtered_datasets["holdout_dataset"]
+                cache_path = self._cache_variant_path(
+                    base_path,
+                    signal_sign=signal_sign,
+                    background_sign=background_sign,
+                )
+                self._save_cache(cache_path)
+
+    def _apply_data_percentage(self) -> None:
+        """Keep an equal, deterministic subset of every signal/category stratum."""
+        if not 0 < self.data_percentage <= 1:
+            raise ValueError("data_percentage must be in the range (0, 1].")
+        if self.data_percentage == 1.0:
+            return
+
+        generator = torch.Generator().manual_seed(self.random_seed)
+        for dataset_name in ("train_dataset", "val_dataset"):
+            dataset = getattr(self, dataset_name)
+            if hasattr(dataset, "tensors"):
+                targets = dataset.tensors[1]
+            else:
+                targets = torch.stack([dataset[index][1] for index in range(len(dataset))])
+
+            strata = targets[:, :2]
+            stratum_values, stratum_counts = torch.unique(strata, dim=0, return_counts=True)
+            requested_events = max(1, int(len(dataset) * self.data_percentage))
+            events_per_stratum = min(
+                int(stratum_counts.min().item()),
+                max(1, requested_events // len(stratum_values)),
+            )
+            selected_indices = []
+            for stratum in stratum_values:
+                stratum_indices = torch.where(torch.all(strata == stratum, dim=1))[0]
+                permutation = torch.randperm(len(stratum_indices), generator=generator)
+                selected_indices.append(stratum_indices[permutation[:events_per_stratum]])
+
+            indices = torch.cat(selected_indices)
+            indices = indices[torch.randperm(len(indices), generator=generator)].tolist()
+            setattr(self, dataset_name, Subset(dataset, indices))
+            logger.info(
+                "Using %d events per signal/category stratum (%d total) for %s (data_percentage=%.3f)",
+                events_per_stratum,
+                len(indices),
+                dataset_name,
+                self.data_percentage,
+            )
+
     # ------------------------------------------------------------------------
 
     def setup(self, stage: str | None = None):
@@ -190,10 +316,25 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             if save_path is not None:
                 save_path = resolve_runtime_path(str(save_path))
 
-        if load_path is not None and Path(load_path).is_file():
-            logger.info("Loading cached dataset from %s", load_path)
-            self._load_cache(load_path)
+        if load_path is not None:
+            if stage == "inference":
+                cache_path = self._inference_cache_path(load_path)
+            else:
+                cache_path = self._cache_variant_path(
+                    load_path,
+                    signal_sign=self.signal_weight_sign,
+                    background_sign=self.background_weight_sign,
+                )
+        else:
+            cache_path = None
+
+        if cache_path is not None and Path(cache_path).is_file():
+            logger.info("Loading cached dataset from %s", cache_path)
+            self._load_cache(cache_path)
+            self._apply_data_percentage()
             return
+        if load_path is not None:
+            logger.info("No sign-specific cache found at %s; processing the source data.", cache_path)
 
         logger.info("Preparing data for stage = %s.\nWith data from file = %s", self.cfg.general.mode, self.input_h5_path)
 
@@ -398,15 +539,6 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
             random_state=self.cfg.general.seed,
         )
 
-        # Convert background [label,categories] back to [0,0]
-        logger.info("Converting background labels back to [0 - class, 0 - category] format...")
-        y_train_bg_mask = y_train[:, 0] == 0
-        y_train[y_train_bg_mask, 1] = 0
-        y_test_bg_mask = y_test[:, 0] == 0
-        y_test[y_test_bg_mask, 1] = 0
-        y_val_bg_mask = y_val[:, 0] == 0
-        y_val[y_val_bg_mask, 1] = 0
-
         logger.info("Split almost complete, only sign(W) filter remains (if applicable).")
         logger.info("Before filter... train = %d, val = %d, test = %d, holdout = %d",
             X_train.shape[0],
@@ -416,10 +548,29 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         )
 
         logger.debug("Exporting to TensorDatasets...")
-        self.train_dataset = self._to_dataset(X_train, y_train, stage=stage)
-        self.val_dataset = self._to_dataset(X_val, y_val, stage=stage)
-        self.test_dataset = self._to_dataset(X_test, y_test, stage=stage)
-        self.holdout_dataset = self._to_dataset(self.X_holdout, self.y_holdout, stage=stage)
+        self.train_dataset = self._to_dataset(X_train, y_train, stage=stage, filter_signs=False)
+        self.val_dataset = self._to_dataset(X_val, y_val, stage=stage, filter_signs=False)
+        self.test_dataset = self._to_dataset(X_test, y_test, stage=stage, filter_signs=False)
+        self.holdout_dataset = self._to_dataset(self.X_holdout, self.y_holdout, stage=stage, filter_signs=False)
+
+        unfiltered_datasets = {
+            "train_dataset": self.train_dataset,
+            "val_dataset": self.val_dataset,
+            "test_dataset": self.test_dataset,
+            "holdout_dataset": self.holdout_dataset,
+        }
+        if stage == "inference":
+            selected_datasets = unfiltered_datasets
+        else:
+            selected_datasets = self._filter_datasets_by_signs(
+                unfiltered_datasets,
+                signal_sign=self.signal_weight_sign,
+                background_sign=self.background_weight_sign,
+            )
+        self.train_dataset = selected_datasets["train_dataset"]
+        self.val_dataset = selected_datasets["val_dataset"]
+        self.test_dataset = selected_datasets["test_dataset"]
+        self.holdout_dataset = selected_datasets["holdout_dataset"]
 
         logger.info(
             "After filter... train = %d, val = %d, test = %d, holdout = %d",
@@ -491,13 +642,30 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
 
 
         if save_path is not None:
-            self._save_cache(save_path)
+            self.train_dataset = unfiltered_datasets["train_dataset"]
+            self.val_dataset = unfiltered_datasets["val_dataset"]
+            self.test_dataset = unfiltered_datasets["test_dataset"]
+            self.holdout_dataset = unfiltered_datasets["holdout_dataset"]
+            self._save_cache(self._inference_cache_path(save_path))
+            self._save_sign_cache_family(save_path, unfiltered_datasets)
+            self.train_dataset = selected_datasets["train_dataset"]
+            self.val_dataset = selected_datasets["val_dataset"]
+            self.test_dataset = selected_datasets["test_dataset"]
+            self.holdout_dataset = selected_datasets["holdout_dataset"]
 
-    def _to_dataset(self, X: np.ndarray, y: np.ndarray, stage: str) -> TensorDataset:
+        self._apply_data_percentage()
+
+    def _to_dataset(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        stage: str,
+        filter_signs: bool = True,
+    ) -> TensorDataset:
         X_tensor = torch.tensor(X, dtype=torch.float32)
         y_tensor = torch.tensor(y, dtype=torch.float32)
 
-        if stage == "inference":
+        if stage == "inference" or not filter_signs:
             return TensorDataset(X_tensor, y_tensor)
 
         filtered_mask = self._sign_mask(X_tensor, y_tensor)
@@ -505,17 +673,26 @@ class PeakDeepMasterDataModule(L.LightningDataModule):
         y_tensor = y_tensor[filtered_mask]
         return TensorDataset(X_tensor, y_tensor)
 
-    def _sign_mask(self, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    def _sign_mask(
+        self,
+        X: torch.Tensor,
+        y: torch.Tensor,
+        signal_weight_sign: str | None = None,
+        background_weight_sign: str | None = None,
+    ) -> torch.Tensor:
         signal_mask = y[:, 0] == 1
         background_mask = y[:, 0] == 0
         weight_values = X[:, self.weight_column_index]
 
-        if self.signal_weight_sign == "positive":
+        selected_signal_sign = self.signal_weight_sign if signal_weight_sign is None else signal_weight_sign
+        selected_background_sign = self.background_weight_sign if background_weight_sign is None else background_weight_sign
+
+        if selected_signal_sign == "positive":
             signal_weight_mask = weight_values >= 0
         else:
             signal_weight_mask = weight_values < 0
 
-        if self.background_weight_sign == "positive":
+        if selected_background_sign == "positive":
             background_weight_mask = weight_values >= 0
         else:
             background_weight_mask = weight_values < 0

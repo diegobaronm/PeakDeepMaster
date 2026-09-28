@@ -1,6 +1,7 @@
 from pathlib import Path
 import itertools
 import logging
+from copy import deepcopy
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
@@ -244,6 +245,24 @@ def _infer_shape_for_point(
     rew = rosmm_sign * rew * weight_ref
     return _hist(x_ref_inverted, rew, normalise=True)
 
+
+def _build_inference_model(cfg: DictConfig, model_class, model_name: str):
+    inference_model_cfg = getattr(cfg.inference, model_name, None)
+    checkpoint = getattr(inference_model_cfg, "checkpoint", None) if inference_model_cfg is not None else None
+    if checkpoint is None:
+        checkpoint = getattr(cfg.inference, f"{model_name}_checkpoint", None)
+    if checkpoint is None:
+        raise ValueError(f"Missing checkpoint for inference.{model_name}.")
+
+    model_cfg = deepcopy(cfg)
+    if inference_model_cfg is not None:
+        for hyperparameter in ("hidden_dim", "hidden_layers", "dropout"):
+            value = getattr(inference_model_cfg, hyperparameter, None)
+            if value is not None:
+                setattr(model_cfg.model, hyperparameter, value)
+
+    return model_class(model_cfg), checkpoint
+
 def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     if not hasattr(cfg, "inference"):
         raise ValueError("Missing inference section in config.")
@@ -258,8 +277,8 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     logger.info(f"Running inference scan for observable: {observable}")
 
     logger.info("Loading models for inference...")
-    pp_ckpt = cfg.inference.model_pp_checkpoint
-    pn_ckpt = cfg.inference.model_pn_checkpoint
+    model_pp, pp_ckpt = _build_inference_model(cfg, model_class, "model_pp")
+    model_pn, pn_ckpt = _build_inference_model(cfg, model_class, "model_pn")
 
     logger.info("Setting datamodule...")
     datamodule.setup(stage="inference")
@@ -279,9 +298,6 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     parameter_units_map = build_parameter_units_map(model_parameter_specs)
     parameter_units = [parameter_units_map.get(n) for n in datamodule.model_parameter_names]
     label_skip_mask = build_label_skip_mask(model_parameter_specs)
-
-    model_pp = model_class(cfg)
-    model_pn = model_class(cfg)
 
     model_pp = load_checkpoint_into_model(model_pp, get_latest_checkpoint_path(pp_ckpt)).model
     model_pn = load_checkpoint_into_model(model_pn, get_latest_checkpoint_path(pn_ckpt)).model
@@ -386,11 +402,19 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     pe_estimator = None
     if n_pseudo > 0:
         pe_confidence = float(getattr(cfg.inference, "pseudo_experiment_confidence", 0.95))
+        pe_strategy = str(getattr(cfg.inference, "pesudo_experiment_strategy", "gaussian")).lower()
+        pe_hypothesis_shape = hypothesis_shape
+        pe_hypothesis_sigma = hypothesis_sigma
+        if pe_strategy == "poisson":
+            pe_hypothesis_shape, pe_hypothesis_sigma, _ = _hist(
+                signal_holdout[:, observable_index], signal_holdout[:, weight_index], normalise=False
+            )
         pe_estimator = PseudoExperimentEstimator(
-            hypothesis_shape=hypothesis_shape,
-            hypothesis_sigma=hypothesis_sigma,
+            hypothesis_shape=pe_hypothesis_shape,
+            hypothesis_sigma=pe_hypothesis_sigma,
             n_pseudo=n_pseudo,
             random_seed=cfg.general.seed,
+            strategy=pe_strategy,
         )
         pe_estimator.generate()
 

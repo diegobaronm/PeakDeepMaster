@@ -26,6 +26,18 @@ def main(cfg: DictConfig) -> None:
         logger.info("Configuration:")
         print(syntax)
 
+        if cfg.general.mode == "optimise":
+            from src.utils.Optimise import run_optimise
+
+            logger.info("Starting hyperparameter optimisation...")
+            run_optimise(cfg)
+            return
+
+        if cfg.general.mode == "input_plots":
+            logger.info("Generating input variable plots...")
+            run_input_plots(cfg)
+            return
+
         logger.info("Initializing data module...")
         datamodule = PeakDeepMasterDataModule(cfg)
 
@@ -38,9 +50,6 @@ def main(cfg: DictConfig) -> None:
             testing(datamodule, LLHRatioEstimator, cfg)
         elif cfg.general.mode == "inference":
             run_inference(datamodule, LLHRatioEstimator, cfg)
-        elif cfg.general.mode == "input_plots":
-            logger.info("Generating input variable plots...")
-            run_input_plots(cfg)
         else:
             raise ValueError(f"Unsupported mode: {cfg.general.mode}")
     except ConfigAttributeError:

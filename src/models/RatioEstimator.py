@@ -6,19 +6,32 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 class RatioEstimatorNet(nn.Module):
-    def __init__(self, x_dim: int, theta_dim: int = 1, hidden_dim: int = 64, dropout: float = 0.05):
+    def __init__(
+        self,
+        x_dim: int,
+        theta_dim: int = 1,
+        hidden_dim: int = 64,
+        hidden_layers: int = 3,
+        dropout: float = 0.05,
+    ):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(x_dim + theta_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(p=dropout),
-            nn.Linear(hidden_dim // 2, 1),
-        )
+        if hidden_layers < 1:
+            raise ValueError("hidden_layers must be at least 1")
+        if hidden_dim < 2 and hidden_layers > 1:
+            raise ValueError("hidden_dim must be at least 2 when using more than one hidden layer")
+
+        self.hidden_layers = hidden_layers
+        hidden_widths = [hidden_dim] if hidden_layers == 1 else [hidden_dim] * (hidden_layers - 1) + [hidden_dim // 2]
+
+        layers: list[nn.Module] = []
+        input_dim = x_dim + theta_dim
+        for layer_index, output_dim in enumerate(hidden_widths):
+            layers.extend([nn.Linear(input_dim, output_dim), nn.ReLU()])
+            if layer_index > 0:
+                layers.append(nn.Dropout(p=dropout))
+            input_dim = output_dim
+        layers.append(nn.Linear(input_dim, 1))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
         return self.net(torch.cat([x, theta], dim=1))
@@ -43,6 +56,7 @@ class LLHRatioEstimator(L.LightningModule):
             x_dim=len(cfg.dataset.observables),
             theta_dim=model_param_count,
             hidden_dim=cfg.model.hidden_dim,
+            hidden_layers=cfg.model.hidden_layers,
             dropout=cfg.model.dropout,
         )
         self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
