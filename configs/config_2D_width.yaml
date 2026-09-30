@@ -20,8 +20,8 @@ dataset:
   input_h5_path: /data/dbaronmo/NTuples_Width_Test/Width_dataset.h5
   max_events_per_parameter: 854000
   cache:
-    # save_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
-    load_path: /data/dbaronmo/pickled/Width_dataset_inference.pkl
+    save_path: /data/dbaronmo/pickled/Width_dataset.pkl
+    load_path: /data/dbaronmo/pickled/Width_dataset.pkl
   observables:
     - EVENT_PARTICLES: top1_pt
       transformation: LogScaler
@@ -72,6 +72,7 @@ dataset:
 
 model:
   hidden_dim: 256
+  hidden_layers: 3
   dropout: 0.05
 
 train:
@@ -94,19 +95,21 @@ performance:
   batch_size: 20480
 
 inference:
-  output_dir: results/inference/coupling_0p7_hmass_950_width_10_correct_split/
-  model_pp_checkpoint: training_logs/2D_PP_256/version_0/checkpoints/
-  model_pn_checkpoint: training_logs/2D_PN_256/version_0/checkpoints/
+  output_dir: results/inference/coupling_0p7_hmass_950_width_2_test/
+  model_pp:
+    checkpoint: training_logs/2D_PP_256/version_0/checkpoints/
+  model_pn:
+    checkpoint: training_logs/2D_PN_256/version_0/checkpoints/
   observable: mttbar
   rosmm_sign: -1.0
   truth_parameters:
     coupling: 0.7
     hmass: 950.0
-    hwidth: 10.0
+    hwidth: 2.0
   scan_parameters:
     - name: coupling
-      min: 1.4
-      max: 1.6
+      min: 0.65
+      max: 0.95
       n_points: 100
     - name: hmass
       min: 940.0
@@ -114,6 +117,7 @@ inference:
       n_points: 20
   n_pseudo_experiments: 10000
   pseudo_experiment_confidence: 0.95
+  pseudo_experiment_strategy: poisson
 
 input_plots:
   output_dir: results/input_plots/2D_width/

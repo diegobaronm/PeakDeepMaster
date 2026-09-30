@@ -375,6 +375,11 @@ flowchart TD
   - `inference_shapes.csv`: all scan-point inference shapes and uncertainties.
   - `best_fit_parameters.csv`: best-fit parameter and $\chi^2$ for each pseudo-experiment.
   - `pseudo_experiment_<param>.pdf`: histogram of best-fit values with confidence interval.
+  - For 2-D inference with pseudo-experiments enabled:
+    - `pseudo_experiment_best_fit_grid.csv`: each configured `(param1, param2)` grid coordinate with its pseudo-experiment count and count divided by `n_pseudo_experiments`.
+    - `pseudo_experiment_best_fit_counts_2d.pdf` and `pseudo_experiment_best_fit_normalized_2d.pdf`: raw-count and normalized-frequency heatmaps.
+    - `pseudo_experiment_2d_gaussian_fit.csv`: the independent Gaussian fit, with means fixed to the nominal minimum-$L^2$ best fit and fitted `sigma_x` / `sigma_y`.
+    - The normalized-frequency and `chi2_scan_heatmap.pdf` plots include fitted 2-D 1-sigma (68.27%) and 2-sigma (95.45%) probability contours. The Gaussian assumes zero correlation; contours enclose the stated probability in two dimensions.
 
 ### `input_plots`
 

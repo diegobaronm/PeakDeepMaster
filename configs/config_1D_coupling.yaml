@@ -50,9 +50,9 @@ dataset:
 
 
 model:
-  hidden_dim: 350
-  hidden_layers: 4
-  dropout: 0.08863328308059405
+  hidden_dim: 256
+  hidden_layers: 3
+  dropout: 0.05
 
 train:
   n_epochs: 150
@@ -74,25 +74,25 @@ performance:
   batch_size: 10240
 
 inference:
-  output_dir: results/inference/1D_coupling_1p1_256_zoom_correct_split/
+  output_dir: results/inference/1D_coupling_0p5_poisson/
   model_pp:
     checkpoint: training_logs/1D_coupling_PP_256_correct_split/version_0/checkpoints/ # training_logs/1D_coupling_PP_optimal_test/version_1/checkpoints/
-    hidden_dim: 350
-    hidden_layers: 4
-    dropout: 0.08863328308059405
+    # hidden_dim: 350 # Optimised value
+    # hidden_layers: 4 # Optimised value
+    # dropout: 0.08863328308059405 # Optimised value
   model_pn:
     checkpoint: training_logs/1D_coupling_PN_256_correct_split/version_0/checkpoints/ # training_logs/1D_coupling_PN_optimal_test/version_4/checkpoints/
-    hidden_dim: 284
-    hidden_layers: 5
-    dropout: 0.02120262847540905
+    # hidden_dim: 284 # Optimised value
+    # hidden_layers: 5 # Optimised value
+    # dropout: 0.02120262847540905 # Optimised value
   observable: mttbar
   rosmm_sign: -1.0
   truth_parameter: 0.5
-  theta_min: 0.45
-  theta_max: 0.6
+  theta_min: 0.50
+  theta_max: 0.55
   n_points: 100
   n_pseudo_experiments: 10000
-  pesudo_experiment_strategy: poisson
+  pseudo_experiment_strategy: poisson
   pseudo_experiment_confidence: 0.95
 
 optimise:

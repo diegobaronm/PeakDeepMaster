@@ -5,13 +5,15 @@ from copy import deepcopy
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 import numpy as np
 import pandas as pd
 import torch
 from omegaconf import DictConfig
+from matplotlib.lines import Line2D
 
 from src.data.DataHelpers import build_label_skip_mask, build_parameter_label_map, build_parameter_units_map, feature_key, is_split_only, normalize_feature_specs, parameter_point_label, parse_feature_spec
-from src.utils.PseudoExperiments import PseudoExperimentEstimator
+from src.utils.PseudoExperiments import PseudoExperimentEstimator, gaussian_contour_levels
 from src.utils.utils import get_latest_checkpoint_path, load_checkpoint_into_model, resolve_runtime_path
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,7 @@ def chi2_heatmap_plot(
     truth_point: tuple[float, ...],
     output_dir: Path,
     font_size: int = 14,
+    gaussian_fit: dict[str, float] | None = None,
 ):
     if len(theta_axes) != 2:
         return
@@ -138,8 +141,61 @@ def chi2_heatmap_plot(
     ax.scatter(theta_axes[0][min_idx[0]], theta_axes[1][min_idx[1]], color="red", marker="x", label="Best fit parameters")
     # Add a point for the truth parameters
     ax.scatter(truth_point[0], truth_point[1], color="green", marker="o", label="Truth parameters")
-    ax.legend(fontsize=font_size)
-    fig.tight_layout()
+    if gaussian_fit is not None:
+        # Use the fitted widths and fixed nominal means to draw parameter-space contours.
+        gaussian_grid = np.exp(
+            -0.5 * (
+                ((theta_axes[0][:, None] - gaussian_fit["mu_x"]) / gaussian_fit["sigma_x"]) ** 2
+                + ((theta_axes[1][None, :] - gaussian_fit["mu_y"]) / gaussian_fit["sigma_y"]) ** 2
+            )
+        )
+        contour_specs = gaussian_contour_levels()
+        contour_levels = [
+            float(gaussian_grid.max() * np.exp(-contour_specs[1][2] / 2.0)),
+            float(gaussian_grid.max() * np.exp(-contour_specs[0][2] / 2.0)),
+        ]
+        visible_levels = [
+            level for level in contour_levels
+            if gaussian_grid.min() < level < gaussian_grid.max()
+        ]
+        contour_legend_handles = []
+        if visible_levels:
+            line_styles = ["dotted" if level == contour_levels[0] else "solid" for level in visible_levels]
+            contours = ax.contour(
+                theta_axes[0], theta_axes[1], gaussian_grid.T,
+                levels=visible_levels,
+                colors="white",
+                linewidths=1.5,
+                linestyles=line_styles,
+            )
+            contour_labels = {
+                contour_levels[0]: r"2-$\sigma$",
+                contour_levels[1]: r"1-$\sigma$",
+            }
+            contour_legend_handles = [
+                Line2D(
+                    [0], [0], color="white", linestyle=line_style, linewidth=1.5,
+                    label=contour_labels[level],
+                    path_effects=[
+                        path_effects.Stroke(linewidth=3, foreground="black"),
+                        path_effects.Normal(),
+                    ],
+                )
+                for level, line_style in zip(visible_levels, line_styles)
+            ]
+    else:
+        contour_legend_handles = []
+    handles, labels = ax.get_legend_handles_labels()
+    contour_legend_handles.sort(
+        key=lambda handle: 0 if handle.get_label().startswith("1-sigma") else 1
+    )
+    handles.extend(contour_legend_handles)
+    labels.extend(handle.get_label() for handle in contour_legend_handles)
+    ax.legend(
+        handles, labels, fontsize=font_size,
+        ncol=2, loc="lower center", bbox_to_anchor=(0.5, 1.02), borderaxespad=0,
+    )
+    fig.subplots_adjust(top=0.78)
     fig.savefig(output_dir / "chi2_scan_heatmap.pdf", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -402,7 +458,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     pe_estimator = None
     if n_pseudo > 0:
         pe_confidence = float(getattr(cfg.inference, "pseudo_experiment_confidence", 0.95))
-        pe_strategy = str(getattr(cfg.inference, "pesudo_experiment_strategy", "gaussian")).lower()
+        pe_strategy = str(getattr(cfg.inference, "pseudo_experiment_strategy", "gaussian")).lower()
         pe_hypothesis_shape = hypothesis_shape
         pe_hypothesis_sigma = hypothesis_sigma
         if pe_strategy == "poisson":
@@ -466,10 +522,9 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     if len(datamodule.model_parameter_names) == 1:
         logger.info("Generating chi2 plot...")
         chi2_plot(theta_axes[0], chi2_values_array, parameter_axis_display_names[0], truth_point, output_dir, font_size)
-    elif len(datamodule.model_parameter_names) == 2:
-        logger.info("Generating chi2 heatmap...")
-        chi2_heatmap_plot(theta_axes, chi2_values_array, parameter_axis_display_names, truth_point, output_dir, font_size)
 
+    # Derive pseudo-experiment uncertainty before rendering the 2-D scan heatmap.
+    gaussian_fit = None
     if pe_estimator is not None:
         logger.info("Running pseudo-experiment uncertainty estimation...")
         pe_estimator.find_best_fits()
@@ -484,6 +539,29 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             parameter_display_names=parameter_display_names,
             parameter_units=parameter_units,
             output_file_names=parameter_display_names,
+        )
+        if len(datamodule.model_parameter_names) == 2:
+            gaussian_fit = pe_estimator.analyze_2d_best_fits(
+                scan_axes=theta_axes,
+                parameter_names=datamodule.model_parameter_names,
+                parameter_labels=parameter_axis_display_names,
+                nominal_best_fit=best_theta,
+                truth_point=truth_point,
+                output_dir=output_dir,
+                font_size=font_size,
+            )
+
+    if len(datamodule.model_parameter_names) == 2:
+        logger.info("Generating chi2 heatmap...")
+        # A missing fit leaves the nominal chi-squared heatmap without uncertainty contours.
+        chi2_heatmap_plot(
+            theta_axes,
+            chi2_values_array,
+            parameter_axis_display_names,
+            truth_point,
+            output_dir,
+            font_size,
+            gaussian_fit=gaussian_fit,
         )
 
     logger.info("Generating review plot...")
