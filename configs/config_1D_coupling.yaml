@@ -74,7 +74,7 @@ performance:
   batch_size: 10240
 
 inference:
-  output_dir: results/inference/1D_coupling_0p5_poisson/
+  output_dir: results/inference/1D_coupling_0p5_poisson_TEST/
   model_pp:
     checkpoint: training_logs/1D_coupling_PP_256_correct_split/version_0/checkpoints/ # training_logs/1D_coupling_PP_optimal_test/version_1/checkpoints/
     # hidden_dim: 350 # Optimised value
@@ -92,6 +92,7 @@ inference:
   theta_max: 0.55
   n_points: 100
   n_pseudo_experiments: 10000
+  n_bins_pseudo_experiments: 40
   pseudo_experiment_strategy: poisson
   pseudo_experiment_confidence: 0.95
 

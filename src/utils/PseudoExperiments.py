@@ -443,6 +443,7 @@ class PseudoExperimentEstimator:
         output_dir: Path,
         confidence: float = 0.95,
         font_size: int = 14,
+        n_bins: int = 50,
         parameter_display_names: list[str] | None = None,
         parameter_units: list[str | None] | None = None,
         output_file_names: list[str] | None = None,
@@ -470,7 +471,7 @@ class PseudoExperimentEstimator:
             nominal_label = parameter_point_label([display_name], (nominal_best_fit[dim],), parameter_units=units)
 
             fig, ax = plt.subplots(figsize=(8, 5))
-            ax.hist(col, bins=50, edgecolor="black", alpha=0.7, label="Pseudo-experiments")
+            ax.hist(col, bins=n_bins, edgecolor="black", alpha=0.7, label="Pseudo-experiments")
             ax.axvline(
                 truth_point[dim], color="green", linestyle="--", linewidth=1.5,
                 label=f"Truth ({truth_label})",

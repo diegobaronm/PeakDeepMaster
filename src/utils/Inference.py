@@ -89,6 +89,59 @@ def inference_scan_plot(infer_shape: np.ndarray, hypothesis_shape: np.ndarray, h
     plt.close(fig)
 
 
+def rosmm_histogram_plot(values: np.ndarray, bin_edges: np.ndarray, title: str, output_path: Path, font_size: int = 14):
+    plt.rcParams.update({"font.size": font_size})
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(values, bins=bin_edges, histtype="step", linewidth=1.5)
+    ax.set_title(title, fontsize=font_size)
+    ax.set_xlabel("1 + r", fontsize=font_size)
+    ax.set_ylabel("Events", fontsize=font_size)
+    ax.set_xlim(-50, 50)
+    ax.set_yscale("log")
+    ax.tick_params(labelsize=font_size)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def rosmm_log_sum_plot(
+    theta_scan: list[tuple[float, ...]],
+    log_sums: np.ndarray,
+    scan_labels: list[str],
+    parameter_labels: list[str],
+    output_path: Path,
+    font_size: int = 14,
+):
+    plt.rcParams.update({"font.size": font_size})
+    fig, ax = plt.subplots(figsize=(9, 6))
+    max_index = int(np.argmax(log_sums))
+    if len(theta_scan[0]) == 1:
+        scan_values = [point[0] for point in theta_scan]
+        ax.plot(scan_values, log_sums, marker="o")
+        max_x = scan_values[max_index]
+        ax.set_xlabel(parameter_labels[0], fontsize=font_size)
+    else:
+        positions = np.arange(len(theta_scan))
+        ax.plot(positions, log_sums, marker="o")
+        max_x = positions[max_index]
+        ax.set_xticks(positions)
+        ax.set_xticklabels(scan_labels, rotation=45, ha="right")
+        ax.set_xlabel("Parameter point", fontsize=font_size)
+    ax.scatter(max_x, log_sums[max_index], color="red", marker="*", s=150, zorder=3)
+    ax.annotate(
+        f"Maximum: {scan_labels[max_index]}\n{log_sums[max_index]:.4g}",
+        xy=(max_x, log_sums[max_index]),
+        xytext=(8, 8),
+        textcoords="offset points",
+        fontsize="small",
+    )
+    ax.set_ylabel(r"Sum of $\log(1+r)$ for events with $1+r>0$", fontsize=font_size)
+    ax.tick_params(labelsize=font_size)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
 def chi2_plot(theta_scan: np.ndarray, chi2_values: np.ndarray, param_label: str, truth_point: tuple[float, ...], output_dir: Path, font_size: int = 14):
     plt.rcParams.update({"font.size": font_size})
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -281,6 +334,14 @@ def _scale_theta_point(theta_point: tuple[float, ...], datamodule) -> np.ndarray
         scaled.append(float(scaled_value))
     return np.asarray(scaled, dtype=np.float32)
 
+def _inverse_scale_theta_point(theta_point: tuple[float, ...], datamodule) -> np.ndarray:
+    inverse_scaled = []
+    for theta_value, transformer_name in zip(theta_point, datamodule.parameter_transformer_names):
+        transformer = datamodule.scaler.named_transformers_[transformer_name]
+        inverse_scaled_value = transformer.inverse_transform(np.asarray([[theta_value]], dtype=float))[0, 0]
+        inverse_scaled.append(float(inverse_scaled_value))
+    return np.asarray(inverse_scaled, dtype=np.float32)
+
 
 def _infer_shape_for_point(
     theta_point: tuple[float, ...],
@@ -297,9 +358,9 @@ def _infer_shape_for_point(
 ):
     theta_scaled = _scale_theta_point(theta_point, datamodule)
     theta_tensor = torch.tensor(theta_scaled, dtype=torch.float32)
-    rew = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
-    rew = rosmm_sign * rew * weight_ref
-    return _hist(x_ref_inverted, rew, normalise=True)
+    rosmm_prediction = rosmm(theta_tensor, x_ref_tensor, model_pp, model_pn, c_zero, c_one).detach().numpy()
+    rew = rosmm_sign * rosmm_prediction * weight_ref
+    return (*_hist(x_ref_inverted, rew, normalise=True), 1.0 + rosmm_prediction)
 
 
 def _build_inference_model(cfg: DictConfig, model_class, model_name: str):
@@ -346,6 +407,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             variable_x_labels[var["name"]] = var.get("x_label", var["name"])
     observable_label = variable_x_labels.get(observable, f"{observable} [GeV]")
     font_size = int(getattr(cfg.input_plots, "font_size", 14)) if hasattr(cfg, "input_plots") else 14
+    n_bins_pseudo_experiments = int(getattr(cfg.inference, "n_bins_pseudo_experiments", 50))
     model_parameter_specs = [spec for spec in normalize_feature_specs(cfg.dataset.parameters) if not is_split_only(spec)]
     parameter_base_labels = build_parameter_label_map(model_parameter_specs, variable_x_labels, include_units=False)
     parameter_axis_labels = build_parameter_label_map(model_parameter_specs, variable_x_labels)
@@ -381,11 +443,14 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
     X_test = datamodule.test_dataset.tensors[0].cpu().numpy()
     y_test = datamodule.test_dataset.tensors[1].cpu().numpy()
 
-    bg_mask = y_test[:, 0] == 0
+    bg_mask = y_test[:, 0] == 0 # Choose between signal or background events
     logger.debug("Number of reference events in test split: %d", bg_mask.sum())
     # Select only one set of background events from the augmented dataset:
     X_test_bg = X_test[bg_mask]
     one_of_the_training_parameters = X_test_bg[0, datamodule.parameter_column_indices]
+    logger.info("Selecting reference background events with parameter point: %s", one_of_the_training_parameters)
+    one_of_the_training_parameters_scaled = _inverse_scale_theta_point(one_of_the_training_parameters, datamodule)
+    logger.info("Scaled parameter point: %s", one_of_the_training_parameters_scaled)
     bg_param_mask = X_test[:, datamodule.parameter_column_indices] == one_of_the_training_parameters
     bg_param_mask = np.all(bg_param_mask, axis=1)
     logger.debug("Number of reference events matching training parameter point: %d", bg_param_mask.sum())
@@ -481,8 +546,11 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         logger.error("Only +/- 1.0 values can be passed as RoSMM sign.")
         raise ValueError(f"{rosmm_sign} is not a valid value for RoSMM sign.")
     scan_rows = []
+    rosmm_predictions = []
+    scan_labels = []
+    log_sums = []
     for theta_point in tqdm(theta_scan, desc="Inference scan", unit="scan point"):
-        infer_shape, infer_sigma, _ = _infer_shape_for_point(
+        infer_shape, infer_sigma, _, one_plus_rosmm = _infer_shape_for_point(
             theta_point=theta_point,
             datamodule=datamodule,
             x_ref_tensor=x_ref_tensor,
@@ -501,6 +569,11 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             skip_mask=label_skip_mask,
             parameter_units=parameter_units,
         )
+        rosmm_predictions.append(one_plus_rosmm)
+        positive_predictions = one_plus_rosmm[np.isfinite(one_plus_rosmm) & (one_plus_rosmm > 0)]
+        log_sum = float(np.log(positive_predictions).sum())
+        log_sums.append(log_sum)
+        scan_labels.append(theta_label)
         if len(datamodule.model_parameter_names) == 1:
             inference_scan_plot(infer_shape, hypothesis_shape, hypothesis_edges, observable_label, theta_label, output_dir, counter, font_size)
         if pe_estimator is not None:
@@ -509,8 +582,35 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         chi2_values.append(chi2_value)
         scan_row = {name: value for name, value in zip(datamodule.model_parameter_names, theta_point)}
         scan_row["chi2"] = chi2_value
+        scan_row["sum_log_one_plus_rosmm"] = log_sum
         scan_rows.append(scan_row)
         counter += 1
+
+    all_rosmm_predictions = np.concatenate(rosmm_predictions)
+    rosmm_bin_edges = np.linspace(-50, 50, 71)
+    for scan_index, (predictions, scan_label) in enumerate(zip(rosmm_predictions, scan_labels), start=1):
+        rosmm_histogram_plot(
+            predictions,
+            rosmm_bin_edges,
+            f"Scan point: {scan_label}",
+            output_dir / f"rosmm_histogram_{scan_index}.pdf",
+            font_size,
+        )
+    rosmm_histogram_plot(
+        all_rosmm_predictions,
+        rosmm_bin_edges,
+        "All scan points",
+        output_dir / "rosmm_histogram_all_scans.pdf",
+        font_size,
+    )
+    rosmm_log_sum_plot(
+        theta_scan,
+        np.asarray(log_sums),
+        scan_labels,
+        parameter_axis_display_names,
+        output_dir / "rosmm_log_sum_scan.pdf",
+        font_size,
+    )
 
     chi2_values_array = np.asarray(chi2_values, dtype=float)
     pd.DataFrame(scan_rows).to_csv(output_dir / "chi2_scan.csv", index=False)
@@ -536,6 +636,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
             output_dir=output_dir,
             confidence=pe_confidence,
             font_size=font_size,
+            n_bins=n_bins_pseudo_experiments,
             parameter_display_names=parameter_display_names,
             parameter_units=parameter_units,
             output_file_names=parameter_display_names,
@@ -566,7 +667,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
 
     logger.info("Generating review plot...")
     logger.debug("Best parameter point inference...")
-    best_infer_shape, _, _ = _infer_shape_for_point(
+    best_infer_shape, _, _, _ = _infer_shape_for_point(
         theta_point=best_theta,
         datamodule=datamodule,
         x_ref_tensor=x_ref_tensor,
@@ -580,7 +681,7 @@ def run_inference(datamodule, model_class, cfg: DictConfig) -> None:
         rosmm_sign=rosmm_sign,
     )
     logger.debug("Truth parameter point inference...")
-    truth_infer_shape, _, _ = _infer_shape_for_point(
+    truth_infer_shape, _, _, _ = _infer_shape_for_point(
         theta_point=truth_point,
         datamodule=datamodule,
         x_ref_tensor=x_ref_tensor,
